@@ -3,7 +3,7 @@
 	url = https://github.com/firesim/aws-fpga-firesim
 [submodule "target-design/chipyard"]
 	path = target-design/chipyard
-	url = https://github.com/ucb-bar/chipyard
+	url = https://github.com/crsullivan13/chipyard.git
 [submodule "sw/network-benchmarks"]
 	path = sw/network-benchmarks
 	url = https://github.com/firesim/network-benchmarks.git
@@ -25,3 +25,5 @@
 [submodule "platforms/rhsresearch_nitefury_ii/NiteFury-and-LiteFury-firesim"]
 	path = platforms/rhsresearch_nitefury_ii/NiteFury-and-LiteFury-firesim
 	url = https://github.com/firesim/NiteFury-and-LiteFury-firesim.git
+[submodule "target-design/chipyard/generators/rocket-chip"]
+	url = https://github.com/crsullivan13/rocket-chip.git
