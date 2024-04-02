@@ -27,3 +27,6 @@
 	url = https://github.com/firesim/NiteFury-and-LiteFury-firesim.git
 [submodule "target-design/chipyard/generators/rocket-chip"]
 	url = https://github.com/crsullivan13/rocket-chip.git
+[submodule "Graphing-BankDefense"]
+	path = Graphing-BankDefense
+	url = https://github.com/crsullivan13/Graphing-BankDefense.git
