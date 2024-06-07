@@ -15,7 +15,7 @@ case object DramOrganizationKey extends Field[DramOrganizationParams]
 class WithDefaultMemModel extends Config((site, here, up) => {
   case LlcKey => None
   // Only used if a DRAM model is requested
-  case DramOrganizationKey => DramOrganizationParams(maxBanks = 8, maxRanks = 4, dramSize = BigInt(1) << 34)
+  case DramOrganizationKey => DramOrganizationParams(maxBanks = 8, maxRanks = 4, dramSize = BigInt(1) << 32)
   // Default to a Latency-Bandwidth Pipe without and LLC model
   case BaseParamsKey => BaseParams(
     maxReads = 16,
