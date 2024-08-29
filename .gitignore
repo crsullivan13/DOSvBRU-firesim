@@ -13,3 +13,4 @@ scala-doc-env.sh
 .metals
 vivado*.log
 vivado*.jou
+deploy/workloads
