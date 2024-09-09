@@ -2,7 +2,6 @@
 switchbuild/switch*.*.*.*
 switchbuild/switch
 results-workload/*
-config_*.yaml
 backup_config_*.yaml
 generated-topology-diagrams/
 logs/*.log
