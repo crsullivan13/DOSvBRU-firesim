@@ -1,0 +1,16 @@
+{
+	"benchmark_name": "bkpll-attack-bw-victim",
+	"common_simulation_outputs": [
+		"uartlog"
+	],
+	"workloads": [
+		{
+			"name": "bkpll-attack-bw-victim-bkpll-attack-bw-victim",
+			"bootbinary": "../../../target-design/chipyard/software/firemarshal/images/firechip/bkpll-attack-bw-victim-bkpll-attack-bw-victim/bkpll-attack-bw-victim-bkpll-attack-bw-victim-bin",
+			"rootfs": "../../../target-design/chipyard/software/firemarshal/images/firechip/bkpll-attack-bw-victim-bkpll-attack-bw-victim/bkpll-attack-bw-victim-bkpll-attack-bw-victim.img",
+			"outputs": [
+				"/root/outputs"
+			]
+		}
+	]
+}

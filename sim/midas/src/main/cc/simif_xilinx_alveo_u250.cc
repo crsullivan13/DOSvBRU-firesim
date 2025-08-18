@@ -276,6 +276,7 @@ void simif_xilinx_alveo_u250_t::fpga_setup(uint16_t domain_id,
   // open and memory map
   sprintf(user_file_name, "/dev/xdma%d_user", xdma_id);
 
+  printf("opening %s\n", user_file_name);
   fd = open(user_file_name, O_RDWR | O_SYNC);
   assert(fd != -1);
 

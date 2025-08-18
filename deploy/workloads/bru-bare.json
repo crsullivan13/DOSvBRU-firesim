@@ -1,0 +1,8 @@
+{
+	"benchmark_name": "bru-bare",
+	"common_simulation_outputs": [
+		"uartlog"
+	],
+	"common_bootbinary": "../../../target-design/chipyard/software/firemarshal/test/bru-bare/hello",
+	"common_rootfs": "../../../target-design/chipyard/software/firemarshal/boards/default/installers/firesim/dummy.rootfs"
+}

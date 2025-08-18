@@ -20,6 +20,8 @@
 #   (optional) verilator_conf: An verilator configuration file
 #   (optional) VERILATOR_FLAGS: extra flags depending on the target
 
+# --trace-start 200
+
 VERILATOR ?= verilator --main --timing --cc --exe
 verilator_v := $(emul_v) $(sim_wrapper_v)
 verilator_cc := $(emul_cc) $(sim_harness)
@@ -60,6 +62,6 @@ $(OUT_DIR)/V$(DRIVER_NAME): $(verilator_v) $(verilator_cc) $(emul_h) $(verilator
 $(OUT_DIR)/V$(DRIVER_NAME)-debug: $(verilator_v) $(verilator_cc) $(emul_h) $(verilator_conf)
 	mkdir -p $(OUT_DIR)
 	rm -rf $(model_dir_debug)
-	$(VERILATOR) $(VERILATOR_FLAGS) --trace +define+DEBUG -Mdir $(model_dir_debug) \
+	$(VERILATOR) $(VERILATOR_FLAGS) --trace  +define+DEBUG -Mdir $(model_dir_debug) \
 		-o $@ $(verilator_v) $(verilator_conf) $(verilator_cc)
 	$(MAKE) -C $(model_dir_debug) -f $(model_mk)

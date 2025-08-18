@@ -8,8 +8,8 @@
 #include <stdexcept>
 #include <vector>
 
-#include <dwarf.h>
-#include <libdwarf.h>
+#include </usr/include/libdwarf/dwarf.h>
+#include </usr/include/libdwarf/libdwarf.h>
 
 namespace {
 void dwarf_runtime_error(Dwarf_Error err, Dwarf_Ptr arg) {
