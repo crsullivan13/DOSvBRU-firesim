@@ -59,7 +59,7 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   val timings = io.mmReg.dramTimings
 
   val backend = Module(new DRAMBackend(cfg.backendKey))
-  val xactionScheduler = Module(new UnifiedFIFOXactionScheduler(cfg.transactionQueueDepth, cfg))
+  val xactionScheduler = Module(new SplitXactionScheduler(cfg.transactionQueueDepth, cfg))
   xactionScheduler.io.req <> nastiReq
   xactionScheduler.io.pendingAWReq := pendingAWReq.value
   xactionScheduler.io.pendingWReq := pendingWReq.value
@@ -86,12 +86,18 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   val newReference = Wire(Decoupled(new FirstReadyFCFSEntry(cfg)))
   newReference.valid := xactionScheduler.io.nextXaction.valid
   newReference.bits.decode(xactionScheduler.io.nextXaction.bits, io.mmReg)
+  when ( newReference.fire ) {
+    printf("DRAM: new ref fired in to collapsing buffer, bank %d\n", newReference.bits.bankAddr)
+  }
 
   // Mark that the new reference hits an open row buffer, in case it missed the broadcast
   val rowHitsInRank = VecInit(rankStateTrackers map { tracker =>
     VecInit(tracker.io.rank.banks map { _.isRowHit(newReference.bits)}).asUInt })
 
   xactionScheduler.io.nextXaction.ready := newReference.ready
+  when ( xactionScheduler.io.nextXaction.valid ) {
+    printf("DRAM: nextXaction has valid data\n")
+  }
 
   val refBuffer = CollapsingBuffer(
     enq               = newReference,
@@ -120,6 +126,9 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   val canLegallyCASW = checkRankBankLegality(_.canCASW) _
   val canLegallyACT = checkRankBankLegality(_.canACT) _
   val canLegallyPRE = checkRankBankLegality(_.canPRE) _
+
+  val writesPending = refList.map(entry => entry.valid && !entry.bits.xaction.isWrite).reduce(_||_)
+  xactionScheduler.io.doesSchedHavePendingWrites := writesPending
 
   columnArbiter.io.in <> refList.map({ entry =>
       val candidate = V2D(entry)
@@ -252,15 +261,31 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
 
   cmdBusBusy.io.set.bits := timings.tCMD - 1.U
   cmdBusBusy.io.set.valid := selectedCmd =/= cmd_nop
+  //e
+  // val newForward = Wire(Decoupled(new FirstReadyFCFSEntry(cfg)))
+  // newForward.valid := xactionScheduler.io.readForwardXaction.valid
+  // xactionScheduler.io.readForwardXaction.ready := newForward.ready
+  // newForward.bits.decode(xactionScheduler.io.readForwardXaction.bits, io.mmReg)
+  // newForward.bits.isReady := DontCare
+  // newForward.bits.mayPRE := DontCare
+  // newForward.ready := !memReqDone
+
+  val newWriteSkip = Wire(Decoupled(new FirstReadyFCFSEntry(cfg)))
+  newWriteSkip.valid := xactionScheduler.io.writeSkip.valid
+  xactionScheduler.io.writeSkip.ready := newWriteSkip.ready
+  newWriteSkip.bits.decode(xactionScheduler.io.writeSkip.bits, io.mmReg)
+  newWriteSkip.bits.isReady := DontCare
+  newWriteSkip.bits.mayPRE := DontCare
 
   backend.io.tCycle := tCycle
-  backend.io.newRead.bits  := ReadResponseMetaData(columnArbiter.io.out.bits.xaction)
-  backend.io.newRead.valid := memReqDone && !columnArbiter.io.out.bits.xaction.isWrite
+  backend.io.newRead.bits  := ReadResponseMetaData(columnArbiter.io.out.bits.xaction)//Mux(memReqDone, ReadResponseMetaData(columnArbiter.io.out.bits.xaction), ReadResponseMetaData(newForward.bits.xaction))
+  backend.io.newRead.valid := (memReqDone && !columnArbiter.io.out.bits.xaction.isWrite)// || (newForward.fire)
   backend.io.readLatency := timings.tCAS + timings.tAL + io.mmReg.backendLatency
 
   // For writes we send out the acknowledge immediately
-  backend.io.newWrite.bits := WriteResponseMetaData(columnArbiter.io.out.bits.xaction)
-  backend.io.newWrite.valid := memReqDone && columnArbiter.io.out.bits.xaction.isWrite
+  backend.io.newWrite.bits := WriteResponseMetaData(newWriteSkip.bits.xaction)
+  backend.io.newWrite.valid := newWriteSkip.valid //memReqDone && columnArbiter.io.out.bits.xaction.isWrite
+  newWriteSkip.ready := backend.io.newWrite.ready
   backend.io.writeLatency := 1.U
 
   wResp <> backend.io.completedWrite

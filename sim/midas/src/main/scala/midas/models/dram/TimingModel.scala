@@ -101,6 +101,7 @@ abstract class TimingModel(val cfg: BaseConfig)(implicit val p: Parameters) exte
   pendingReads.inc := tNasti.ar.fire
   pendingReads.dec := tNasti.r.fire && tNasti.r.bits.last
 
+  println(s"DRAM MAX WRITES: ${cfg.maxWrites}")
   val pendingAWReq = SatUpDownCounter(cfg.maxWrites)
   pendingAWReq.inc := tNasti.aw.fire
   pendingAWReq.dec := tNasti.b.fire

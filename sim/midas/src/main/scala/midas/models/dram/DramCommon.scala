@@ -11,6 +11,8 @@ import org.json4s.native.JsonMethods._
 import Console.{UNDERLINED, GREEN, RESET}
 import scala.io.Source
 
+import midas.targetutils.SynthesizePrintf
+
 
 trait HasDRAMMASConstants {
   val maxDRAMTimingBits = 7 // width of a DRAM timing
@@ -115,7 +117,7 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
   val bankAddr = Input(new ProgrammableSubAddr(
     maskBits = cfg.dramKey.bankBits,
     longName = "Bank Address",
-    defaultOffset = 13, // Assume 8KB page size
+    defaultOffset = 16, // Assume 8KB page size
     defaultMask = 7 // DDR3 Has 8 banks
   ))
 
@@ -271,6 +273,7 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
 
 case class DramOrganizationParams(maxBanks: Int, maxRanks: Int, dramSize: BigInt, lineBits: Int = 8) {
   require(isPow2(maxBanks))
+  println(s"Max ranks is ${maxRanks}")
   require(isPow2(maxRanks))
   require(isPow2(dramSize))
   require(isPow2(lineBits))
@@ -582,8 +585,8 @@ class CommandBusMonitor extends Module {
       val autoPRE = io.autoPRE
       val burstChop = false.B
       val column = 0.U // Don't care since we aren't checking data
-      printf("read(%d, %d, %d, %x, %x); // %d\n",
-        io.rank, io.bank, column, autoPRE, burstChop, cycleCounter)
+      SynthesizePrintf(printf("read(%d, %d, %d, %x, %x); // %d\n",
+        io.rank, io.bank, column, autoPRE, burstChop, cycleCounter))
     }
     is(cmd_casw) {
       val autoPRE = io.autoPRE
@@ -591,8 +594,8 @@ class CommandBusMonitor extends Module {
       val column = 0.U // Don't care since we aren't checking data
       val mask = 0.U // Don't care since we aren't checking data
       val data = 0.U // Don't care since we aren't checking data
-      printf("write(%d, %d, %d, %x, %x, %d, %d); // %d\n",
-        io.rank, io.bank, column, autoPRE, burstChop, mask, data, cycleCounter)
+      SynthesizePrintf(printf("write(%d, %d, %d, %x, %x, %d, %d); // %d\n",
+        io.rank, io.bank, column, autoPRE, burstChop, mask, data, cycleCounter))
     }
     is(cmd_ref) {
       printf("refresh(%d); // %d\n", io.rank, cycleCounter)
@@ -645,6 +648,7 @@ class RankPowerIO extends Bundle {
   val numCASR = UInt(32.W) // Assume no burst-chop
   val numCASW = UInt(32.W) // Ditto above
   val numACT = UInt(32.W)
+  val numModeSwitch = UInt(64.W)
 
   // TODO
   // CKE low & all banks pre
@@ -658,6 +662,7 @@ object RankPowerIO {
     w.numCASR := 0.U
     w.numCASW := 0.U
     w.numACT := 0.U
+    w.numModeSwitch := 0.U
     w
   }
 }
@@ -671,6 +676,7 @@ class RankPowerMonitor(key: DramOrganizationParams) extends Module with HasDRAMM
     val cmdUsesThisRank = Input(Bool())
   })
   val stats = RegInit(RankPowerIO())
+  val lastCASType = Reg(cmd_nop.cloneType)
 
   when (io.cmdUsesThisRank) {
     switch(io.selectedCmd) {
@@ -678,9 +684,15 @@ class RankPowerMonitor(key: DramOrganizationParams) extends Module with HasDRAMM
         stats.numACT := stats.numACT + 1.U
       }
       is(cmd_casw) {
+        lastCASType := cmd_casw
         stats.numCASW := stats.numCASW + 1.U
       }
       is(cmd_casr) {
+        lastCASType := cmd_casr
+        when ( lastCASType === cmd_casw ) {
+          printf("DRAM: Bus mode switch\n")
+          stats.numModeSwitch := stats.numModeSwitch + 1.U
+        }
         stats.numCASR := stats.numCASR + 1.U
       }
     }

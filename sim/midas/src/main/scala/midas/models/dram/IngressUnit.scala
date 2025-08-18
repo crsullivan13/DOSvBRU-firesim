@@ -84,6 +84,9 @@ class IngressModule(val cfg: BaseConfig)(implicit val p: Parameters) extends Mod
 
 
   val ingressUnitStall = !tFireHelper.fire(io.nastiInputs.hValid)
+  when ( ingressUnitStall ) {
+    printf("DRAM: Ingress unit stalled\n")
+  }
 
   // A request is finished when we have both a complete AW and W request
   // Only then can we consider issuing the write to host memory system
@@ -144,6 +147,13 @@ class IngressModule(val cfg: BaseConfig)(implicit val p: Parameters) extends Mod
   io.nastiOutputs.aw.bits := awQueue.io.deq.bits
   io.nastiOutputs.w.bits := wQueue.io.deq.bits
 
+  when ( io.nastiOutputs.aw.fire ) {
+    printf("DRAM: aw fired to host\n")
+  }
+
+    when ( io.nastiOutputs.aw.valid && !io.nastiOutputs.aw.ready ) {
+    printf("DRAM: aw is blocked to host\n")
+  }
   io.nastiOutputs.aw.valid := do_hwrite && awQueue.io.deq.valid
   awQueue.io.deq.ready := do_hwrite && io.nastiOutputs.aw.ready
 

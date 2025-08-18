@@ -222,6 +222,7 @@ class FASEDMemoryTimingModel(completeConfig: CompleteConfig, hostParams: Paramet
         aligned = true, // This must be the case for the TL-based width adapter to work 
         maxFlight = Some(math.max(cfg.maxReadsPerID, cfg.maxWritesPerID))
       )))))
+  println(s"AXI ID RANGE: ${IdRange(0, 1 << p(NastiKey).idBits)}")
 
   // Begin: Implementation of UsesHostDRAM
   val hostWidthBytes = p(MemNastiKey).dataBits / 8
@@ -285,6 +286,7 @@ class FASEDMemoryTimingModel(completeConfig: CompleteConfig, hostParams: Paramet
       maxRequests = cfg.maxWrites,
       maxReqLength = cfg.maxWriteLength,
       maxReqsPerId = cfg.maxWritesPerID))
+    println(s"WRITE EGRESS: maxReq ${cfg.maxWrites} maxReqLeng ${cfg.maxWriteLength} maxReqPerID ${cfg.maxWritesPerID}")
 
     writeEgress.io.enq <> nastiToHostDRAM.b
     writeEgress.io.enq.bits.user := DontCare

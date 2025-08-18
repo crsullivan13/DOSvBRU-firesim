@@ -333,6 +333,9 @@ class WriteEgress(maxRequests: Int, maxReqLength: Int, maxReqsPerId: Int)
     haveAck := notEmpty(deqId)
   }
 
+  when ( io.enq.fire ) {
+    printf("EGRESS: got host write response\n")
+  }
   val idMatch = currReqReg.bits === io.enq.bits.id
   val do_enq = io.enq.fire
   val do_deq = targetFire && currReqReg.valid && haveAck && io.resp.tReady

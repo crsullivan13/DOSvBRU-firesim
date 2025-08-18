@@ -15,7 +15,7 @@ case object DramOrganizationKey extends Field[DramOrganizationParams]
 class WithDefaultMemModel extends Config((site, here, up) => {
   case LlcKey => None
   // Only used if a DRAM model is requested
-  case DramOrganizationKey => DramOrganizationParams(maxBanks = 8, maxRanks = 4, dramSize = BigInt(1) << 34)
+  case DramOrganizationKey => DramOrganizationParams(maxBanks = 8, maxRanks = 1, dramSize = BigInt(1) << 34)
   // Default to a Latency-Bandwidth Pipe without and LLC model
   case BaseParamsKey => BaseParams(
     maxReads = 16,
@@ -99,7 +99,7 @@ class FCFS16GBQuadRankLLC4MB extends Config(
 // DDR3 - First-Ready FCFS models
 class FRFCFS16GBQuadRank extends Config(
   new WithFuncModelLimits(32,32) ++
-  new WithDDR3FRFCFS(8, 8) ++
+  new WithDDR3FRFCFS(32, 32) ++
   new WithDefaultMemModel
 )
 class FRFCFS16GBQuadRankLLC4MB extends Config(
