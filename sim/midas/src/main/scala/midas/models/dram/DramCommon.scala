@@ -115,7 +115,7 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
   val bankAddr = Input(new ProgrammableSubAddr(
     maskBits = cfg.dramKey.bankBits,
     longName = "Bank Address",
-    defaultOffset = 13, // Assume 8KB page size
+    defaultOffset = 16, // Assume 8KB page size
     defaultMask = 7 // DDR3 Has 8 banks
   ))
 
@@ -645,6 +645,7 @@ class RankPowerIO extends Bundle {
   val numCASR = UInt(32.W) // Assume no burst-chop
   val numCASW = UInt(32.W) // Ditto above
   val numACT = UInt(32.W)
+  val numModeSwitch = UInt(64.W)
 
   // TODO
   // CKE low & all banks pre
@@ -658,6 +659,7 @@ object RankPowerIO {
     w.numCASR := 0.U
     w.numCASW := 0.U
     w.numACT := 0.U
+    w.numModeSwitch := 0.U
     w
   }
 }
@@ -671,6 +673,7 @@ class RankPowerMonitor(key: DramOrganizationParams) extends Module with HasDRAMM
     val cmdUsesThisRank = Input(Bool())
   })
   val stats = RegInit(RankPowerIO())
+  val lastCASType = Reg(cmd_nop.cloneType)
 
   when (io.cmdUsesThisRank) {
     switch(io.selectedCmd) {
@@ -678,9 +681,15 @@ class RankPowerMonitor(key: DramOrganizationParams) extends Module with HasDRAMM
         stats.numACT := stats.numACT + 1.U
       }
       is(cmd_casw) {
+        lastCASType := cmd_casw
         stats.numCASW := stats.numCASW + 1.U
       }
       is(cmd_casr) {
+        lastCASType := cmd_casr
+        when ( lastCASType === cmd_casw ) {
+          printf("DRAM: Bus mode switch\n")
+          stats.numModeSwitch := stats.numModeSwitch + 1.U
+        }
         stats.numCASR := stats.numCASR + 1.U
       }
     }
