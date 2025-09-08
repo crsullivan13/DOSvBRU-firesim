@@ -120,7 +120,7 @@ class SplitXactionScheduler(depth: Int, cfg: BaseConfig)(implicit p: Parameters)
 
   val readQueue = Module(new Queue(new XactionSchedulerEntry, depth))
   val writeQueue = Module(new Queue(new XactionSchedulerEntry, depth))
-  val writeRespQueue = Module(new Queue(new XactionSchedulerEntry, 8))
+  val writeRespQueue = Module(new Queue(new XactionSchedulerEntry, depth))
   val writeAddressTable = Module(new QueueAddressLookup(depth))
   val transactionQueueArb = Module(new RRArbiter(new XactionSchedulerEntry, 2))
 
@@ -132,13 +132,14 @@ class SplitXactionScheduler(depth: Int, cfg: BaseConfig)(implicit p: Parameters)
   transactionQueueArb.io.in(0).bits.addr := io.req.ar.bits.addr
 
   transactionQueueArb.io.in(1).valid := io.req.aw.valid
-  io.req.aw.ready := transactionQueueArb.io.in(1).ready
+  io.req.aw.ready := transactionQueueArb.io.in(1).ready && writeRespQueue.io.enq.ready
   transactionQueueArb.io.in(1).bits.xaction := TransactionMetaData(io.req.aw.bits)
   transactionQueueArb.io.in(1).bits.addr := io.req.aw.bits.addr
 
   writeRespQueue.io.enq.bits.xaction := TransactionMetaData(io.req.aw.bits)
   writeRespQueue.io.enq.bits.addr := io.req.aw.bits.addr
   writeRespQueue.io.enq.valid := io.req.aw.valid
+  assert(writeRespQueue.io.count < depth.U)
 
   writeAddressTable.io.newAddress.bits := io.req.aw.bits.addr
   writeAddressTable.io.newAddress.valid := writeQueue.io.enq.fire
@@ -195,6 +196,10 @@ class SplitXactionScheduler(depth: Int, cfg: BaseConfig)(implicit p: Parameters)
   completedWrites.inc := io.req.w.fire && io.req.w.bits.last
   completedWrites.dec := io.nextXaction.fire && io.nextXaction.bits.xaction.isWrite
 
+  val ackedWrites = SatUpDownCounter(cfg.maxWrites)
+  ackedWrites.inc := io.req.w.fire && io.req.w.bits.last
+  ackedWrites.dec := writeRespQueue.io.deq.fire
+
   val shouldUseHighWatermark = completedWrites.value >= ( depth.U - 8.U )
   val shouldUseLowWatermark = ( completedWrites.value >= 5.U ) && !io.doesSchedHavePendingWrites // this is reads just being lazy
   val isDraining = shouldDrainWrites && ( completedWrites.value > 0.U )
@@ -233,6 +238,6 @@ class SplitXactionScheduler(depth: Int, cfg: BaseConfig)(implicit p: Parameters)
     printf("DRAM: Write skip fired\n")
   }
   io.writeSkip.bits := writeRespQueue.io.deq.bits
-  io.writeSkip.valid := writeRespQueue.io.deq.valid && io.req.w.fire && io.req.w.bits.last
-  writeRespQueue.io.deq.ready := io.writeSkip.ready && io.req.w.fire && io.req.w.bits.last
+  io.writeSkip.valid := writeRespQueue.io.deq.valid && ( ackedWrites.value > 0.U ) //( ( io.req.w.fire && io.req.w.bits.last ) )
+  writeRespQueue.io.deq.ready := io.writeSkip.ready && ( ackedWrites.value > 0.U ) //( ( io.req.w.fire && io.req.w.bits.last ) )
 }
