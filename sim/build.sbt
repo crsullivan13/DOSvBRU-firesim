@@ -101,7 +101,7 @@ lazy val diplomacy = (project in chipyardDir / "generators" / "diplomacy" / "dip
 
 
 lazy val rocketchip = (project in chipyardDir / "generators" / "rocket-chip")
-  .dependsOn(hardfloat, rocketMacros, diplomacy, cde)
+  .dependsOn(hardfloat, rocketMacros, diplomacy, cde, targetutils)
   .settings(commonSettings)
   .settings(chiselSettings)
   .settings(
