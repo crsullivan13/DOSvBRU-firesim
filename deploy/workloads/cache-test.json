@@ -4,5 +4,8 @@
 		"uartlog"
 	],
 	"common_bootbinary": "../../../target-design/chipyard/software/firemarshal/images/firechip/cache-test/cache-test-bin",
-	"common_rootfs": "../../../target-design/chipyard/software/firemarshal/images/firechip/cache-test/cache-test.img"
+	"common_rootfs": "../../../target-design/chipyard/software/firemarshal/images/firechip/cache-test/cache-test.img",
+	"common_outputs": [
+		"/root/outputs"
+	]
 }
