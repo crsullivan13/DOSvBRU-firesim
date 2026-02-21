@@ -65,24 +65,48 @@ class DRAMProgrammableTimings extends Bundle with HasDRAMMASConstants with HasPr
   }
 
   // Defaults are set to sg093, x8, 2048Mb density (1GHz clock)
+  // val registers = Seq(
+  //   tAL   -> RuntimeSetting(0,"Additive Latency"),
+  //   tCAS  -> JSONSetting(14,  "CAS Latency",                    { _("CL_TIME") }),
+  //   tCMD  -> JSONSetting(1,   "Command Transport Time",         { lut => 1 }),
+  //   tCWD  -> JSONSetting(10,  "Write CAS Latency",              { lut =>  tCAS2tCWL(lut("CL_TIME")) }),
+  //   tCCD  -> JSONSetting(4,   "Column-to-Column Delay",         { _("TCCD") }),
+  //   tFAW  -> JSONSetting(25,  "Four row-Activation Window",     { _("TFAW") }),
+  //   tRAS  -> JSONSetting(33,  "Row Access Strobe Delay",        { _("TRAS_MIN") }),
+  //   tREFI -> JSONSetting(7800,"REFresh Interval",               { _("TRFC_MAX")/9 }),
+  //   tRC   -> JSONSetting(47,  "Row Cycle time",                 { _("TRC") }),
+  //   tRCD  -> JSONSetting(14,  "Row-to-Column Delay",            { _("TRCD") }),
+  //   tRFC  -> JSONSetting(160, "ReFresh Cycle time",             { _("TRFC_MIN") }),
+  //   tRRD  -> JSONSetting(8,   "Row-to-Row Delay",               { _("TRRD") }),
+  //   tRP   -> JSONSetting(14,  "Row-Precharge delay",            { _("TRP") }),
+  //   tRTP  -> JSONSetting(8,   "Read-To-Precharge delay",        { lut => lut("TRTP").max(lut("TRTP_TCK")) }),
+  //   tRTRS -> JSONSetting(2,   "Rank-to-Rank Switching Time",    { lut => 2 }), // FIXME
+  //   tWR   -> JSONSetting(15,  "Write-Recovery time",            { _("TWR") }),
+  //   tWTR  -> JSONSetting(8,   "Write-To-Read Turnaround Time",  { _("TWTR") })
+  // )
+
+  // DDR4-2133 from micron. i am assuming a 1GHz clock. 4Gb density x8 config. this means 1KB pages
   val registers = Seq(
     tAL   -> RuntimeSetting(0,"Additive Latency"),
-    tCAS  -> JSONSetting(14,  "CAS Latency",                    { _("CL_TIME") }),
-    tCMD  -> JSONSetting(1,   "Command Transport Time",         { lut => 1 }),
-    tCWD  -> JSONSetting(10,  "Write CAS Latency",              { lut =>  tCAS2tCWL(lut("CL_TIME")) }),
-    tCCD  -> JSONSetting(4,   "Column-to-Column Delay",         { _("TCCD") }),
-    tFAW  -> JSONSetting(25,  "Four row-Activation Window",     { _("TFAW") }),
-    tRAS  -> JSONSetting(33,  "Row Access Strobe Delay",        { _("TRAS_MIN") }),
-    tREFI -> JSONSetting(7800,"REFresh Interval",               { _("TRFC_MAX")/9 }),
-    tRC   -> JSONSetting(47,  "Row Cycle time",                 { _("TRC") }),
-    tRCD  -> JSONSetting(14,  "Row-to-Column Delay",            { _("TRCD") }),
-    tRFC  -> JSONSetting(160, "ReFresh Cycle time",             { _("TRFC_MIN") }),
-    tRRD  -> JSONSetting(8,   "Row-to-Row Delay",               { _("TRRD") }),
-    tRP   -> JSONSetting(14,  "Row-Precharge delay",            { _("TRP") }),
-    tRTP  -> JSONSetting(8,   "Read-To-Precharge delay",        { lut => lut("TRTP").max(lut("TRTP_TCK")) }),
-    tRTRS -> JSONSetting(2,   "Rank-to-Rank Switching Time",    { lut => 2 }), // FIXME
-    tWR   -> JSONSetting(15,  "Write-Recovery time",            { _("TWR") }),
-    tWTR  -> JSONSetting(8,   "Write-To-Read Turnaround Time",  { _("TWTR") })
+    tCAS  -> JSONSetting(15,  "CAS Latency",                           { _("CL_TIME") }),
+    tCMD  -> JSONSetting(1,   "Command Transport Time",                { lut => 1 }),
+    tCWD  -> JSONSetting(10,  "Write CAS Latency",                     { lut =>  tCAS2tCWL(lut("CL_TIME")) }),
+    tCCD_S  -> JSONSetting(4,   "Column-to-Column Delay Short",        { _("TCCD_S") }),
+    tCCD_L  -> JSONSetting(6,   "Column-to-Column Delay Long",         { _("TCCD_L") }),
+    tFAW  -> JSONSetting(21,  "Four row-Activation Window",            { _("TFAW") }),
+    tRAS  -> JSONSetting(33,  "Row Access Strobe Delay",               { _("TRAS_MIN") }),
+    tREFI -> JSONSetting(7800,"REFresh Interval",                      { _("TRFC_MAX")/9 }),
+    tRC   -> JSONSetting(48,  "Row Cycle time",                        { _("TRC") }),
+    tRCD  -> JSONSetting(15,  "Row-to-Column Delay",                   { _("TRCD") }),
+    tRFC  -> JSONSetting(160, "ReFresh Cycle time",                    { _("TRFC_MIN") }),
+    tRRD_S  -> JSONSetting(4,   "Row-to-Row Delay Short",              { _("TRRD_S") }),
+    tRRD_L  -> JSONSetting(5,   "Row-to-Row Delay Long",               { _("TRRD_L") }),
+    tRP   -> JSONSetting(15,  "Row-Precharge delay",                   { _("TRP") }),
+    tRTP  -> JSONSetting(8,   "Read-To-Precharge delay",               { lut => lut("TRTP").max(lut("TRTP_TCK")) }),
+    tRTRS -> JSONSetting(2,   "Rank-to-Rank Switching Time",           { lut => 2 }), // FIXME
+    tWR   -> JSONSetting(15,  "Write-Recovery time",                   { _("TWR") }),
+    tWTR_S  -> JSONSetting(3,   "Write-To-Read Turnaround Time Short", { _("TWTR_S") }),
+    tWTR_L  -> JSONSetting(8,   "Write-To-Read Turnaround Time Long",  { _("TWTR_L") })
   )
 
   def setDependentRegisters(lut: Map[String, JSONField], freqMHz: BigInt): Unit = {
