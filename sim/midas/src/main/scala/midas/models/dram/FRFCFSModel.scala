@@ -80,7 +80,7 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   // Instead of counting the number, we keep a bit to indicate presence
   // it is set on activation, enqueuing a new ready entry, and unset when a memreq kills the last
   // ready entry
-  val bankHasReadyEntries = RegInit(VecInit(Seq.fill(cfg.dramKey.maxRanks * cfg.dramKey.maxBanks)(false.B)))
+  val bankHasReadyEntries = RegInit(VecInit(Seq.fill(cfg.dramKey.maxRanks * cfg.dramKey.maxBankGroups * cfg.dramKey.maxBanks)(false.B)))
 
   // State for the collapsing buffer of pending memory references
   val newReference = Wire(Decoupled(new FirstReadyFCFSEntry(cfg)))
@@ -172,8 +172,8 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   // will not correspond to the row of the CAS command since that is implicit
   // to the state of the bank.
   val cmdBank = WireInit(UInt(cfg.dramKey.bankBits.W), init = preBank)
-  val cmdBankOH = UIntToOH(cmdBank)
   val cmdBankGroup = WireInit(UInt(cfg.dramKey.bankGroupBits.W), init = preBankGroup)
+  val cmdBankOH = UIntToOH(Cat(cmdBankGroup, cmdBank))
   val cmdRank = WireInit(UInt(cfg.dramKey.rankBits.W), init = columnArbiter.io.out.bits.rankAddr)
   val cmdRow = actRow
 
@@ -249,7 +249,7 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
       // 1:The last ready request has been made to the bank
       newReference.bits.addrMatch(cmdRank, cmdBankGroup, cmdBank) && memReqDone && !otherReadyEntries ||
       // 2: There are no ready references, and a precharge is not being issued to the bank this cycle
-      !bankHasReadyEntries(Cat(newReference.bits.rankAddr, newReference.bits.bankAddr)) && 
+      !bankHasReadyEntries(Cat(newReference.bits.rankAddr, newReference.bits.bankAddr, newReference.bits.bankGroupAddr)) && 
       !(selectedCmd === cmd_pre && newRefBankAddrMatch),
       false.B)
 
@@ -259,7 +259,7 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   }
 
   when (newReference.bits.isReady & newReference.fire){
-    bankHasReadyEntries(Cat(newReference.bits.rankAddr, newReference.bits.bankAddr)) := true.B
+    bankHasReadyEntries(Cat(newReference.bits.rankAddr, newReference.bits.bankAddr, newReference.bits.bankGroupAddr)) := true.B
   }
 
   rankStateTrackers.zip(UIntToOH(cmdRank).asBools) foreach { case (state, cmdUsesThisRank)  =>
@@ -302,6 +302,7 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   val cmdMonitor = Module(new CommandBusMonitor())
   cmdMonitor.io.cmd := selectedCmd
   cmdMonitor.io.rank := cmdRank
+  cmdMonitor.io.bankGroup := cmdBankGroup
   cmdMonitor.io.bank := cmdBank
   cmdMonitor.io.row := cmdRow
   cmdMonitor.io.autoPRE := casAutoPRE

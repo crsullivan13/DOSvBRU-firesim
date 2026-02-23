@@ -313,7 +313,7 @@ case class DramOrganizationParams(maxBankGroups: Int = 4, maxBanks: Int = 16, ma
   require(isPow2(dramSize))
   require(isPow2(lineBits))
   def bankGroupBits = log2Up(maxBankGroups)
-  def bankBits = log2Up(maxBanks)
+  def bankBits = log2Up(maxBanks / maxBankGroups)
   def rankBits = if (maxRanks == 1) 0 else log2Up(maxRanks)
   def rowBits  = log2Ceil(dramSize) - lineBits
   def maxRows  = 1 << rowBits
@@ -362,7 +362,7 @@ class MASEntry(key: DRAMBaseConfig)(implicit p: Parameters) extends Bundle {
     bankGroupAddr := mmReg.bankGroupAddr.getSubAddr(from.addr)
     bankGroupAddrOH := UIntToOH(bankGroupAddr)
     bankAddr := mmReg.bankAddr.getSubAddr(from.addr)
-    bankAddrOH := UIntToOH(bankAddr)
+    bankAddrOH := UIntToOH(Cat(bankGroupAddr, bankAddr))
     rowAddr := mmReg.rowAddr.getSubAddr(from.addr)
     rankAddr := mmReg.rankAddr.getSubAddr(from.addr)
     rankAddrOH := UIntToOH(rankAddr)
@@ -635,6 +635,7 @@ class CommandBusMonitor extends Module {
   val io = IO( new Bundle {
     val cmd = Input(cmd_nop.cloneType)
     val rank = Input(UInt())
+    val bankGroup = Input(UInt())
     val bank = Input(UInt())
     val row = Input(UInt())
     val autoPRE = Input(Bool())
@@ -650,14 +651,14 @@ class CommandBusMonitor extends Module {
 
   switch (io.cmd) {
     is(cmd_act) {
-      printf("activate(%d, %d, %d); // %d\n", io.rank, io.bank, io.row, cycleCounter)
+      printf("activate(%d, %d, %d, %d); // %d\n", io.rank, io.bankGroup, io.bank, io.row, cycleCounter)
     }
     is(cmd_casr) {
       val autoPRE = io.autoPRE
       val burstChop = false.B
       val column = 0.U // Don't care since we aren't checking data
-      SynthesizePrintf(printf("read(%d, %d, %d, %x, %x); // %d\n",
-        io.rank, io.bank, column, autoPRE, burstChop, cycleCounter))
+      SynthesizePrintf(printf("read(%d, %d, %d, %d, %x, %x); // %d\n",
+        io.rank, io.bankGroup, io.bank, column, autoPRE, burstChop, cycleCounter))
     }
     is(cmd_casw) {
       val autoPRE = io.autoPRE
@@ -665,15 +666,15 @@ class CommandBusMonitor extends Module {
       val column = 0.U // Don't care since we aren't checking data
       val mask = 0.U // Don't care since we aren't checking data
       val data = 0.U // Don't care since we aren't checking data
-      SynthesizePrintf(printf("write(%d, %d, %d, %x, %x, %d, %d); // %d\n",
-        io.rank, io.bank, column, autoPRE, burstChop, mask, data, cycleCounter))
+      SynthesizePrintf(printf("write(%d, %d, %d, %d, %x, %x, %d, %d); // %d\n",
+        io.rank, io.bankGroup, io.bank, column, autoPRE, burstChop, mask, data, cycleCounter))
     }
     is(cmd_ref) {
       printf("refresh(%d); // %d\n", io.rank, cycleCounter)
     }
     is(cmd_pre) {
       val preAll = false.B
-      printf("precharge(%d,%d,%d); // %d\n",io.rank, io.bank, preAll, cycleCounter)
+      printf("precharge(%d,%d,%d,%d); // %d\n",io.rank, io.bankGroup, io.bank, preAll, cycleCounter)
     }
   }
 }
@@ -708,9 +709,9 @@ class RefreshUnit(key: DramOrganizationParams) extends Module {
 
   io.suggestPRE := (ranksWantingRefresh & prechargeableRanks).orR
   io.preRankAddr := PriorityEncoder(ranksWantingRefresh & prechargeableRanks)
-  io.preBankAddr := PriorityMux(ranksWantingRefresh & prechargeableRanks, preRefBanks)
+  io.preBankAddr := PriorityMux(ranksWantingRefresh & prechargeableRanks, preRefBanks) % 4.U
   require(key.maxBanks % key.maxBankGroups == 0)
-  io.preBankGroupAddr := PriorityMux(ranksWantingRefresh & prechargeableRanks, preRefBanks) % 4.U // assume 4 banks per group
+  io.preBankGroupAddr := PriorityMux(ranksWantingRefresh & prechargeableRanks, preRefBanks) / 4.U(4.W) // assume 4 banks per group
 }
 
 
