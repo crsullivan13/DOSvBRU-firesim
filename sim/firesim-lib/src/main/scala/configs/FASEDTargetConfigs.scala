@@ -11,15 +11,15 @@ case object LlcKey extends Field[Option[LLCParams]]
 case object DramOrganizationKey extends Field[DramOrganizationParams]
 
 // Instantiates an AXI4 memory model that executes (1 / clockDivision) of the frequency
-// of the RTL transformed model (Rocket Chip)
+// of the RTL transformed model (Rocket Chip)..
 class WithDefaultMemModel extends Config((site, here, up) => {
   case LlcKey => None
   // Only used if a DRAM model is requested
-  case DramOrganizationKey => DramOrganizationParams(maxBanks = 8, maxRanks = 1, dramSize = BigInt(1) << 34)
+  case DramOrganizationKey => DramOrganizationParams(maxBanks = 16, maxRanks = 1, dramSize = BigInt(1) << 34)
   // Default to a Latency-Bandwidth Pipe without and LLC model
   case BaseParamsKey => BaseParams(
-    maxReads = 16,
-    maxWrites = 16,
+    maxReads = 32,
+    maxWrites = 32,
     beatCounters = true,
     llcKey = site(LlcKey))
 
@@ -50,13 +50,13 @@ class WithDramOrganization(maxRanks: Int, maxBanks: Int, dramSize: BigInt)
 })
 
 
-// Instantiates a DDR3 model with a FCFS memory access scheduler
-class WithDDR3FIFOMAS(queueDepth: Int) extends Config((site, here, up) => {
-  case MemModelKey => new FIFOMASConfig(
-    transactionQueueDepth = queueDepth,
-    dramKey = site(DramOrganizationKey),
-    params = site(BaseParamsKey))
-})
+// // Instantiates a DDR3 model with a FCFS memory access scheduler
+// class WithDDR3FIFOMAS(queueDepth: Int) extends Config((site, here, up) => {
+//   case MemModelKey => new FIFOMASConfig(
+//     transactionQueueDepth = queueDepth,
+//     dramKey = site(DramOrganizationKey),
+//     params = site(BaseParamsKey))
+// })
 
 // Instantiates a DDR3 model with a FR-FCFS memory access scheduler
 // windowSize = Maximum number of references the MAS can schedule across
@@ -90,11 +90,11 @@ class LBP32R32WLLC4MB extends Config(
   new WithFuncModelLimits(32,32) ++
   new WithDefaultMemModel)
 
-// DDR3 - FCFS models.
-class FCFS16GBQuadRank extends Config(new WithDDR3FIFOMAS(8) ++ new WithDefaultMemModel)
-class FCFS16GBQuadRankLLC4MB extends Config(
-  new WithLLCModel(4096, 8) ++
-  new FCFS16GBQuadRank)
+// // DDR3 - FCFS models.
+// class FCFS16GBQuadRank extends Config(new WithDDR3FIFOMAS(8) ++ new WithDefaultMemModel)
+// class FCFS16GBQuadRankLLC4MB extends Config(
+//   new WithLLCModel(4096, 8) ++
+//   new FCFS16GBQuadRank)
 
 // DDR3 - First-Ready FCFS models
 class FRFCFS16GBQuadRank extends Config(

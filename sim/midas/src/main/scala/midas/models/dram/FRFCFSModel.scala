@@ -87,7 +87,7 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   newReference.valid := xactionScheduler.io.nextXaction.valid
   newReference.bits.decode(xactionScheduler.io.nextXaction.bits, io.mmReg)
   when ( newReference.fire ) {
-    printf("DRAM: new ref fired in to collapsing buffer, bank %d\n", newReference.bits.bankAddr)
+    printf("DRAM: new ref fired in to collapsing buffer, bankGroup %d, bank %d\n", newReference.bits.bankGroupAddr, newReference.bits.bankAddr)
   }
 
   // Mark that the new reference hits an open row buffer, in case it missed the broadcast
@@ -110,11 +110,19 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   // Selects the oldest candidate from all ready references that can legally request a CAS
   val columnArbiter =  Module(new Arbiter(refList.head.bits.cloneType, refList.size))
 
-  def checkRankBankLegality(getField: CommandLegalBools => Bool)(masEntry: FirstReadyFCFSEntry): Bool = {
-    val bankFields = rankStateTrackers map { rank => VecInit(rank.io.rank.banks map getField).asUInt }
+  def checkRankBankLegality(getBankField: CommandLegalBools => Bool, getRankField: RankCommandLegalBools => Bool)(masEntry: FirstReadyFCFSEntry): Bool = {
+    val bankFields = rankStateTrackers map { rank => VecInit(rank.io.rank.banks map getBankField).asUInt }
     val bankLegal = (Mux1H(masEntry.rankAddrOH, bankFields) & masEntry.bankAddrOH).orR
-    val rankFields = VecInit(rankStateTrackers map { rank => getField(rank.io.rank) }).asUInt
+    val rankFields = VecInit(rankStateTrackers map { rank => getRankField(rank.io.rank) }).asUInt
     val rankLegal = (masEntry.rankAddrOH & rankFields).orR
+    rankLegal && bankLegal
+  }
+
+  def checkRankBankGroupLegality(getBankField: CommandLegalBools => Bool, getRankField: RankCommandLegalBools => Vec[Bool])(masEntry: FirstReadyFCFSEntry): Bool = {
+    val bankFields = rankStateTrackers map { rank => VecInit(rank.io.rank.banks map getBankField).asUInt }
+    val bankLegal = (Mux1H(masEntry.rankAddrOH, bankFields) & masEntry.bankAddrOH).orR
+    val rankBgFields = VecInit(rankStateTrackers map { rank => getRankField(rank.io.rank)(masEntry.bankGroupAddr) }).asUInt
+    val rankLegal = (masEntry.rankAddrOH & rankBgFields).orR
     rankLegal && bankLegal
   }
 
@@ -122,10 +130,10 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
     (rankAddrOH & (VecInit(rankStateTrackers map { _.io.rank.wantREF }).asUInt)).orR
 
 
-  val canLegallyCASR = checkRankBankLegality( _.canCASR ) _
-  val canLegallyCASW = checkRankBankLegality(_.canCASW) _
-  val canLegallyACT = checkRankBankLegality(_.canACT) _
-  val canLegallyPRE = checkRankBankLegality(_.canPRE) _
+  val canLegallyCASR = checkRankBankGroupLegality(_.canCASR, _.canCASR) _
+  val canLegallyCASW = checkRankBankGroupLegality(_.canCASW, _.canCASW) _
+  val canLegallyACT = checkRankBankGroupLegality(_.canACT, _.canACT) _
+  val canLegallyPRE = checkRankBankLegality(_.canPRE, _.canPRE) _
 
   val writesPending = refList.map(entry => entry.valid && !entry.bits.xaction.isWrite).reduce(_||_)
   xactionScheduler.io.doesSchedHavePendingWrites := writesPending
@@ -147,10 +155,12 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
     !rankWantsRef(ref.bits.rankAddrOH) }
 
   val preBank = PriorityMux(entryWantsPRE, refList.map(_.bits.bankAddr))
+  val preBankGroup = PriorityMux(entryWantsPRE, refList.map(_.bits.bankGroupAddr))
   val preRank = PriorityMux(entryWantsPRE, refList.map(_.bits.rankAddr))
   val suggestPre = entryWantsPRE reduce {_ || _}
 
   val actRank = PriorityMux(entryWantsACT, refList.map(_.bits.rankAddr))
+  val actBankGroup = PriorityMux(entryWantsACT, refList.map(_.bits.bankGroupAddr))
   val actBank = PriorityMux(entryWantsACT, refList.map(_.bits.bankAddr))
   val actRow = PriorityMux(entryWantsACT, refList.map(_.bits.rowAddr))
 
@@ -163,6 +173,7 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   // to the state of the bank.
   val cmdBank = WireInit(UInt(cfg.dramKey.bankBits.W), init = preBank)
   val cmdBankOH = UIntToOH(cmdBank)
+  val cmdBankGroup = WireInit(UInt(cfg.dramKey.bankGroupBits.W), init = preBankGroup)
   val cmdRank = WireInit(UInt(cfg.dramKey.rankBits.W), init = columnArbiter.io.out.bits.rankAddr)
   val cmdRow = actRow
 
@@ -178,13 +189,16 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
     selectedCmd := cmd_pre
     cmdRank := refreshUnit.preRankAddr
     cmdBank := refreshUnit.preBankAddr
+    cmdBankGroup := refreshUnit.preBankGroupAddr
   }.elsewhen(columnArbiter.io.out.valid){
     selectedCmd := Mux(columnArbiter.io.out.bits.xaction.isWrite, cmd_casw, cmd_casr)
     cmdBank := columnArbiter.io.out.bits.bankAddr
+    cmdBankGroup := columnArbiter.io.out.bits.bankGroupAddr
   }.elsewhen(suggestAct) {
     selectedCmd := cmd_act
     cmdRank := actRank
     cmdBank := actBank
+    cmdBankGroup := actBankGroup
   }.elsewhen(suggestPre) {
     selectedCmd := cmd_pre
     cmdRank := preRank
@@ -198,7 +212,7 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
     when (sel.fire) { ref.valid := false.B }
     // If the entry is not killed, but shares the same open row as the killed reference, return true
     !sel.fire && ref.valid && ref.bits.isReady &&
-    cmdBank === ref.bits.bankAddr && cmdRank === ref.bits.rankAddr
+    cmdBank === ref.bits.bankAddr && cmdRank === ref.bits.rankAddr && cmdBankGroup === ref.bits.bankGroupAddr
   }
 
   val otherReadyEntries = entriesStillReady reduce { _ || _ }
@@ -207,7 +221,7 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   // Mark new entries that now hit in a open row buffer
   // Or invalidate them if a precharge was issued
   refUpdates.foreach({ ref =>
-    when(cmdRank === ref.bits.rankAddr && cmdBank === ref.bits.bankAddr) {
+    when(cmdRank === ref.bits.rankAddr && cmdBank === ref.bits.bankAddr && cmdBankGroup === ref.bits.bankGroupAddr) {
       when (selectedCmd === cmd_act) {
         ref.bits.isReady := ref.bits.rowAddr === cmdRow
         ref.bits.mayPRE := false.B
@@ -220,8 +234,8 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
     }
   })
 
-  val newRefAddrMatch = newReference.bits.addrMatch(cmdRank, cmdBank, Some(cmdRow))
-  val newRefBankAddrMatch = newReference.bits.addrMatch(cmdRank, cmdBank)
+  val newRefAddrMatch = newReference.bits.addrMatch(cmdRank, cmdBankGroup, cmdBank, Some(cmdRow))
+  val newRefBankAddrMatch = newReference.bits.addrMatch(cmdRank, cmdBankGroup, cmdBank)
   newReference.bits.isReady := // 1) Row just opened or 2) already open && No precharges to that row this cycle
     selectedCmd === cmd_act && newRefAddrMatch ||
     (rowHitsInRank(newReference.bits.rankAddr) & newReference.bits.bankAddrOH).orR &&
@@ -233,7 +247,7 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   newReference.bits.mayPRE := // Last ready reference serviced or no other ready entries
     Mux(io.mmReg.openPagePolicy,
       // 1:The last ready request has been made to the bank
-      newReference.bits.addrMatch(cmdRank, cmdBank) && memReqDone && !otherReadyEntries ||
+      newReference.bits.addrMatch(cmdRank, cmdBankGroup, cmdBank) && memReqDone && !otherReadyEntries ||
       // 2: There are no ready references, and a precharge is not being issued to the bank this cycle
       !bankHasReadyEntries(Cat(newReference.bits.rankAddr, newReference.bits.bankAddr)) && 
       !(selectedCmd === cmd_pre && newRefBankAddrMatch),
@@ -250,6 +264,7 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
 
   rankStateTrackers.zip(UIntToOH(cmdRank).asBools) foreach { case (state, cmdUsesThisRank)  =>
     state.io.selectedCmd := selectedCmd
+    state.io.cmdBankGroup := cmdBankGroup
     state.io.cmdBankOH := cmdBankOH
     state.io.cmdRow := cmdRow
     state.io.autoPRE := casAutoPRE
@@ -261,14 +276,6 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
 
   cmdBusBusy.io.set.bits := timings.tCMD - 1.U
   cmdBusBusy.io.set.valid := selectedCmd =/= cmd_nop
-  //e
-  // val newForward = Wire(Decoupled(new FirstReadyFCFSEntry(cfg)))
-  // newForward.valid := xactionScheduler.io.readForwardXaction.valid
-  // xactionScheduler.io.readForwardXaction.ready := newForward.ready
-  // newForward.bits.decode(xactionScheduler.io.readForwardXaction.bits, io.mmReg)
-  // newForward.bits.isReady := DontCare
-  // newForward.bits.mayPRE := DontCare
-  // newForward.ready := !memReqDone
 
   val newWriteSkip = Wire(Decoupled(new FirstReadyFCFSEntry(cfg)))
   newWriteSkip.valid := xactionScheduler.io.writeSkip.valid
@@ -278,13 +285,13 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   newWriteSkip.bits.mayPRE := DontCare
 
   backend.io.tCycle := tCycle
-  backend.io.newRead.bits  := ReadResponseMetaData(columnArbiter.io.out.bits.xaction)//Mux(memReqDone, ReadResponseMetaData(columnArbiter.io.out.bits.xaction), ReadResponseMetaData(newForward.bits.xaction))
-  backend.io.newRead.valid := (memReqDone && !columnArbiter.io.out.bits.xaction.isWrite)// || (newForward.fire)
+  backend.io.newRead.bits  := ReadResponseMetaData(columnArbiter.io.out.bits.xaction)
+  backend.io.newRead.valid := (memReqDone && !columnArbiter.io.out.bits.xaction.isWrite)
   backend.io.readLatency := timings.tCAS + timings.tAL + io.mmReg.backendLatency
 
   // For writes we send out the acknowledge immediately
   backend.io.newWrite.bits := WriteResponseMetaData(newWriteSkip.bits.xaction)
-  backend.io.newWrite.valid := newWriteSkip.valid //memReqDone && columnArbiter.io.out.bits.xaction.isWrite
+  backend.io.newWrite.valid := newWriteSkip.valid
   newWriteSkip.ready := backend.io.newWrite.ready
   backend.io.writeLatency := 1.U
 

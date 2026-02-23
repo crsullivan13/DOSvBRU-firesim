@@ -40,19 +40,22 @@ class DRAMProgrammableTimings extends Bundle with HasDRAMMASConstants with HasPr
   val tCAS = UInt(maxDRAMTimingBits.W)
   val tCMD = UInt(maxDRAMTimingBits.W)
   val tCWD = UInt(maxDRAMTimingBits.W)
-  val tCCD = UInt(maxDRAMTimingBits.W)
+  val tCCD_S = UInt(maxDRAMTimingBits.W)
+  val tCCD_L = UInt(maxDRAMTimingBits.W)
   val tFAW = UInt(maxDRAMTimingBits.W)
   val tRAS = UInt(maxDRAMTimingBits.W)
   val tREFI = UInt(tREFIBits.W)
   val tRC  = UInt(maxDRAMTimingBits.W)
   val tRCD = UInt(maxDRAMTimingBits.W)
   val tRFC = UInt(tRFCBits.W)
-  val tRRD = UInt(maxDRAMTimingBits.W)
+  val tRRD_S = UInt(maxDRAMTimingBits.W)
+  val tRRD_L = UInt(maxDRAMTimingBits.W)
   val tRP  = UInt(maxDRAMTimingBits.W)
   val tRTP = UInt(maxDRAMTimingBits.W)
   val tRTRS = UInt(maxDRAMTimingBits.W)
   val tWR  = UInt(maxDRAMTimingBits.W)
-  val tWTR = UInt(maxDRAMTimingBits.W)
+  val tWTR_S = UInt(maxDRAMTimingBits.W)
+  val tWTR_L = UInt(maxDRAMTimingBits.W)
 
 
   def tCAS2tCWL(tCAS: BigInt) = {
@@ -137,12 +140,19 @@ abstract class DRAMBaseConfig extends BaseConfig with HasDRAMMASConstants {
 abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with HasConsoleUtils {
 
   // The default assignment corresponde to a standard open-page policy
-  // with 8K pages. All available ranks are enabled.
+  // with 1K pages. All available ranks are enabled.
+  val bankGroupAddr = Input(new ProgrammableSubAddr(
+    maskBits = cfg.dramKey.bankGroupBits,
+    longName = "Bank Group Address",
+    defaultOffset = 16, // Offset this to avoid partition overlaps with cache heirarchy
+    defaultMask = 3 // DDR4 x8 Has 4 bank groups
+  ))
+
   val bankAddr = Input(new ProgrammableSubAddr(
     maskBits = cfg.dramKey.bankBits,
     longName = "Bank Address",
-    defaultOffset = 16, // Assume 8KB page size
-    defaultMask = 7 // DDR3 Has 8 banks
+    defaultOffset = bankGroupAddr.defaultOffset + log2Ceil(bankGroupAddr.defaultMask + 1),
+    defaultMask = 3 // DDR4 x8 has 4 banks per group
   ))
 
   val rankAddr = Input(new ProgrammableSubAddr(
@@ -295,23 +305,34 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
   }
 }
 
-case class DramOrganizationParams(maxBanks: Int, maxRanks: Int, dramSize: BigInt, lineBits: Int = 8) {
-  require(isPow2(maxBanks))
+case class DramOrganizationParams(maxBankGroups: Int = 4, maxBanks: Int = 16, maxRanks: Int, dramSize: BigInt, lineBits: Int = 8) {
+  require(isPow2(maxBankGroups) && maxBankGroups == 4) // enforce x8 config
+  require(isPow2(maxBanks) && maxBanks % 16 == 0) // DDR4 assumes multiples of 16 for number of banks
   println(s"Max ranks is ${maxRanks}")
   require(isPow2(maxRanks))
   require(isPow2(dramSize))
   require(isPow2(lineBits))
+  def bankGroupBits = log2Up(maxBankGroups)
   def bankBits = log2Up(maxBanks)
   def rankBits = if (maxRanks == 1) 0 else log2Up(maxRanks)
   def rowBits  = log2Ceil(dramSize) - lineBits
   def maxRows  = 1 << rowBits
 }
 
+// create another one of these that has vecs for CAS and ACT per bank group
 trait CommandLegalBools {
   val canCASW = Output(Bool())
   val canCASR = Output(Bool())
   val canPRE  = Output(Bool())
   val canACT  = Output(Bool())
+}
+
+trait RankCommandLegalBools {
+  val key: DramOrganizationParams
+  val canCASW = Output(Vec(key.maxBankGroups, Bool()))
+  val canCASR = Output(Vec(key.maxBankGroups, Bool()))
+  val canPRE  = Output(Bool())
+  val canACT  = Output(Vec(key.maxBankGroups, Bool()))
 }
 
 trait HasLegalityUpdateIO {
@@ -329,6 +350,8 @@ trait HasLegalityUpdateIO {
 class MASEntry(key: DRAMBaseConfig)(implicit p: Parameters) extends Bundle {
   val xaction = new TransactionMetaData
   val rowAddr = UInt(key.dramKey.rowBits.W)
+  val bankGroupAddrOH = UInt(key.dramKey.maxBankGroups.W)
+  val bankGroupAddr = UInt(key.dramKey.bankGroupBits.W)
   val bankAddrOH = UInt(key.dramKey.maxBanks.W)
   val bankAddr = UInt(key.dramKey.bankBits.W)
   val rankAddrOH = UInt(key.dramKey.maxRanks.W)
@@ -336,6 +359,8 @@ class MASEntry(key: DRAMBaseConfig)(implicit p: Parameters) extends Bundle {
 
   def decode(from: XactionSchedulerEntry, mmReg: BaseDRAMMMRegIO): Unit = {
     xaction := from.xaction
+    bankGroupAddr := mmReg.bankGroupAddr.getSubAddr(from.addr)
+    bankGroupAddrOH := UIntToOH(bankGroupAddr)
     bankAddr := mmReg.bankAddr.getSubAddr(from.addr)
     bankAddrOH := UIntToOH(bankAddr)
     rowAddr := mmReg.rowAddr.getSubAddr(from.addr)
@@ -343,9 +368,9 @@ class MASEntry(key: DRAMBaseConfig)(implicit p: Parameters) extends Bundle {
     rankAddrOH := UIntToOH(rankAddr)
   }
 
-  def addrMatch(rank: UInt, bank: UInt, row: Option[UInt] = None): Bool = {
+  def addrMatch(rank: UInt, bankGroup: UInt, bank: UInt, row: Option[UInt] = None): Bool = {
     val rowHit =  row.foldLeft(true.B)({ case (p, addr) => p && addr === rowAddr })
-    rank === rankAddr && bank === bankAddr && rowHit
+    rank === rankAddr && bankGroup === bankGroupAddr && bank === bankAddr && rowHit
   }
 }
 
@@ -434,11 +459,11 @@ class BankStateTracker(key: DramOrganizationParams) extends Module with HasDRAMM
           state := bank_idle
           nextLegalACT.io.set.valid := true.B
           nextLegalACT.io.set.bits := io.timings.tCWD + io.timings.tAL + io.timings.tWR +
-            io.timings.tCCD + io.timings.tRP + 1.U
+            io.timings.tCCD_L + io.timings.tRP + 1.U
         }.otherwise {
           nextLegalPRE.io.set.valid := true.B
           nextLegalPRE.io.set.bits := io.timings.tCWD + io.timings.tAL +  io.timings.tWR +
-            io.timings.tCCD - 1.U
+            io.timings.tCCD_L - 1.U
         }
       }
       is(cmd_pre) {
@@ -458,7 +483,6 @@ class BankStateTracker(key: DramOrganizationParams) extends Module with HasDRAMM
   io.out.openRow := openRowAddr
 }
 
-
 // Tracks the state of a rank, including:
 //   - Whether CAS, PRE, and ACT commands can be legally issued
 //
@@ -470,7 +494,7 @@ class BankStateTracker(key: DramOrganizationParams) extends Module with HasDRAMM
 // commands use the open ROW.
 
 class RankStateTrackerO(val key: DramOrganizationParams) extends Bundle
-    with CommandLegalBools {
+    with RankCommandLegalBools {
   import DRAMMasEnums._
   val canREF = Output(Bool())
   val wantREF = Output(Bool())
@@ -478,11 +502,14 @@ class RankStateTrackerO(val key: DramOrganizationParams) extends Bundle
   val banks = Vec(key.maxBanks, Output(new BankStateTrackerO(key)))
 }
 
+// TODO: Update to properly account for bank groups i.e. we need one tracker per group along with global control
+
 class RankStateTrackerIO(val key: DramOrganizationParams) extends Bundle
     with HasLegalityUpdateIO with HasDRAMMASConstants {
   val rank = new RankStateTrackerO(key)
   val tCycle = Input(UInt(maxDRAMTimingBits.W))
   val cmdUsesThisRank = Input(Bool())
+  val cmdBankGroup = Input(UInt(key.bankGroupBits.W))
   val cmdBankOH = Input(UInt(key.maxBanks.W))
 }
 
@@ -492,14 +519,18 @@ class RankStateTracker(key: DramOrganizationParams) extends Module with HasDRAMM
   val io = IO(new RankStateTrackerIO(key))
 
   val nextLegalPRE = Module(new DownCounter(maxDRAMTimingBits))
-  val nextLegalACT = Module(new DownCounter(tRFCBits))
-  val nextLegalCASR = Module(new DownCounter(maxDRAMTimingBits))
-  val nextLegalCASW = Module(new DownCounter(maxDRAMTimingBits))
+  val nextLegalACT = Seq.fill(key.maxBankGroups)(Module(new DownCounter(tRFCBits)))
+  val nextLegalCASR = Seq.fill(key.maxBankGroups)(Module(new DownCounter(maxDRAMTimingBits)))
+  val nextLegalCASW = Seq.fill(key.maxBankGroups)(Module(new DownCounter(maxDRAMTimingBits)))
   val tREFI = RegInit(0.U(tREFIBits.W))
   val state = RegInit(rank_active)
   val wantREF = RegInit(false.B)
 
-  Seq(nextLegalPRE, nextLegalCASW, nextLegalCASR, nextLegalACT) foreach { mod =>
+  nextLegalPRE.io.decr := true.B
+  nextLegalPRE.io.set.valid := false.B
+  nextLegalPRE.io.set.bits := DontCare
+
+  Seq(nextLegalCASW, nextLegalCASR, nextLegalACT).flatten.foreach { mod =>
     mod.io.decr := true.B
     mod.io.set.valid := false.B
     mod.io.set.bits := DontCare
@@ -511,33 +542,45 @@ class RankStateTracker(key: DramOrganizationParams) extends Module with HasDRAMM
   tFAWcheck.io.deq.ready := io.tCycle === tFAWcheck.io.deq.bits
 
   when (io.cmdUsesThisRank && io.selectedCmd === cmd_act) {
-    assert(io.rank.canACT, "Rank Timing Violation: Controller issued ACT command illegally")
-    nextLegalACT.io.set.valid := true.B
-    nextLegalACT.io.set.bits := io.timings.tRRD - 1.U
+    for (i <- 0 until key.maxBankGroups) {
+      when (i.U === io.cmdBankGroup) {
+        assert(io.rank.canACT(i), "Rank Timing Violation: Controller issued ACT command illegally")
+      }
+      nextLegalACT(i).io.set.valid := true.B
+      nextLegalACT(i).io.set.bits := Mux(i.U  === io.cmdBankGroup, io.timings.tRRD_L, io.timings.tRRD_S) - 1.U
+    }
 
   }.elsewhen (io.selectedCmd === cmd_casr) {
-    assert(!io.cmdUsesThisRank || io.rank.canCASR,
-      "Rank Timing Violation: Controller issued CASR command illegally")
-    nextLegalCASR.io.set.valid := true.B
-    nextLegalCASR.io.set.bits := io.timings.tCCD +
-      Mux(io.cmdUsesThisRank, 0.U, io.timings.tRTRS) - 1.U
+    for (i <- 0 until key.maxBankGroups) {
+      when (i.U  === io.cmdBankGroup) {
+        assert(!io.cmdUsesThisRank || io.rank.canCASR(i),
+          "Rank Timing Violation: Controller issued CASR command illegally")
+      }
+      nextLegalCASR(i).io.set.valid := true.B
+      nextLegalCASR(i).io.set.bits := Mux(i.U  === io.cmdBankGroup, io.timings.tCCD_L, io.timings.tCCD_S) + 
+        Mux(io.cmdUsesThisRank, 0.U, io.timings.tRTRS) - 1.U
 
-    // TODO: tRTRS isn't the correct parameter here, but need a two cycle delay in DDR3
-    nextLegalCASW.io.set.valid := true.B
-    nextLegalCASW.io.set.bits := io.timings.tCAS + io.timings.tCCD - io.timings.tCWD +
-      io.timings.tRTRS - 1.U
+      // TODO: tRTRS isn't the correct parameter here, but need a two cycle delay in DDR3..
+      nextLegalCASW(i).io.set.valid := true.B
+      nextLegalCASW(i).io.set.bits := io.timings.tCAS + io.timings.tCCD_S - io.timings.tCWD +
+        io.timings.tRTRS - 1.U
+    }
 
   }.elsewhen (io.selectedCmd === cmd_casw) {
-    assert(!io.cmdUsesThisRank || io.rank.canCASW,
-      "Rank Timing Violation: Controller issued CASW command illegally")
-    nextLegalCASR.io.set.valid := true.B
-    nextLegalCASR.io.set.bits := Mux(io.cmdUsesThisRank,
-      io.timings.tCWD + io.timings.tCCD + io.timings.tWTR - 1.U,
-      io.timings.tCWD + io.timings.tCCD + io.timings.tRTRS - io.timings.tCAS - 1.U)
+    for (i <- 0 until key.maxBankGroups) {
+      when (i.U  === io.cmdBankGroup) {
+        assert(!io.cmdUsesThisRank || io.rank.canCASW(i),
+          "Rank Timing Violation: Controller issued CASW command illegally")
+      }
+      nextLegalCASR(i).io.set.valid := true.B
+      nextLegalCASR(i).io.set.bits := Mux(i.U  === io.cmdBankGroup, io.timings.tCCD_L, io.timings.tCCD_S) +
+        Mux(io.cmdUsesThisRank, io.timings.tCWD + Mux(i.U  === io.cmdBankGroup, io.timings.tWTR_L, io.timings.tWTR_S),
+        io.timings.tCWD + io.timings.tRTRS - io.timings.tCAS) - 1.U
 
-    // TODO: OST
-    nextLegalCASW.io.set.valid := true.B
-    nextLegalCASW.io.set.bits := io.timings.tCCD - 1.U
+      // TODO: OST
+      nextLegalCASW(i).io.set.valid := true.B
+      nextLegalCASW(i).io.set.bits := Mux(i.U  === io.cmdBankGroup, io.timings.tCCD_L, io.timings.tCCD_S) - 1.U
+    }
 
   }.elsewhen (io.cmdUsesThisRank && io.selectedCmd === cmd_pre) {
       assert(io.rank.canPRE, "Rank Timing Violation: Controller issued PRE command illegally")
@@ -546,8 +589,10 @@ class RankStateTracker(key: DramOrganizationParams) extends Module with HasDRAMM
       assert(io.rank.canREF, "Rank Timing Violation: Controller issued REF command illegally")
       wantREF := false.B
       state := rank_refresh
-      nextLegalACT.io.set.valid := true.B
-      nextLegalACT.io.set.bits := io.timings.tRFC - 1.U
+      for (i <- 0 until key.maxBankGroups) {
+        nextLegalACT(i).io.set.valid := true.B
+        nextLegalACT(i).io.set.bits := io.timings.tRFC - 1.U
+      }
   }
 
   // Disable refresion by setting tREFI = 0
@@ -558,7 +603,7 @@ class RankStateTracker(key: DramOrganizationParams) extends Module with HasDRAMM
     tREFI := tREFI + 1.U
   }
 
-  when (state === rank_refresh && nextLegalACT.io.current === 1.U) {
+  when (state === rank_refresh && nextLegalACT.map { _.io.current === 1.U }.reduce(_||_)) {
     state := rank_active
   }
 
@@ -574,10 +619,12 @@ class RankStateTracker(key: DramOrganizationParams) extends Module with HasDRAMM
   }
 
   io.rank.canREF := (bankTrackers map {  _.out.canACT } reduce { _ && _ })
-  io.rank.canCASR := nextLegalCASR.io.idle
-  io.rank.canCASW := nextLegalCASW.io.idle
+  for (i <- 0 until key.maxBankGroups) {
+    io.rank.canCASR(i) := nextLegalCASR(i).io.idle
+    io.rank.canCASW(i) := nextLegalCASW(i).io.idle
+    io.rank.canACT(i) := nextLegalACT(i).io.idle && tFAWcheck.io.enq.ready
+  }
   io.rank.canPRE := nextLegalPRE.io.idle
-  io.rank.canACT := nextLegalACT.io.idle && tFAWcheck.io.enq.ready
   io.rank.wantREF := wantREF
   io.rank.state := state
 }
@@ -640,6 +687,7 @@ class RankRefreshUnitIO(val key: DramOrganizationParams) extends Bundle {
   val refRankAddr = Output(UInt(key.rankBits.W))
   val suggestPRE = Output(Bool())
   val preRankAddr = Output(UInt(key.rankBits.W))
+  val preBankGroupAddr = Output(UInt(key.bankGroupBits.W))
   val preBankAddr = Output(UInt(key.bankBits.W))
 }
 
@@ -661,6 +709,8 @@ class RefreshUnit(key: DramOrganizationParams) extends Module {
   io.suggestPRE := (ranksWantingRefresh & prechargeableRanks).orR
   io.preRankAddr := PriorityEncoder(ranksWantingRefresh & prechargeableRanks)
   io.preBankAddr := PriorityMux(ranksWantingRefresh & prechargeableRanks, preRefBanks)
+  require(key.maxBanks % key.maxBankGroups == 0)
+  io.preBankGroupAddr := PriorityMux(ranksWantingRefresh & prechargeableRanks, preRefBanks) % 4.U // assume 4 banks per group
 }
 
 

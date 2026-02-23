@@ -100,9 +100,9 @@ class DefaultConfig extends Config(
   })
 )
 
-class FCFSConfig extends Config(
-  new FCFS16GBQuadRank ++
-  new DefaultConfig)
+// class FCFSConfig extends Config(
+//   new FCFS16GBQuadRank ++
+//   new DefaultConfig)
 
 class FRFCFSConfig extends Config(
   new FRFCFS16GBQuadRank ++
