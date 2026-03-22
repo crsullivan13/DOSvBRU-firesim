@@ -117,7 +117,7 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
   val bankAddr = Input(new ProgrammableSubAddr(
     maskBits = cfg.dramKey.bankBits,
     longName = "Bank Address",
-    defaultOffset = 16, // Assume 8KB page size
+    defaultOffset = 9, // Assume 8KB page size
     defaultMask = 7 // DDR3 Has 8 banks
   ))
 
@@ -128,7 +128,8 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
     defaultMask = (1 << cfg.dramKey.rankBits) - 1
   ))
 
-  val defaultRowOffset = rankAddr.defaultOffset + log2Ceil(rankAddr.defaultMask + 1)
+  //val defaultRowOffset = rankAddr.defaultOffset + log2Ceil(rankAddr.defaultMask + 1)
+  val defaultRowOffset = 16
   val rowAddr = Input(new ProgrammableSubAddr(
     maskBits = cfg.dramKey.rowBits,
     longName = "Row Address",
@@ -273,7 +274,9 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
 
 case class DramOrganizationParams(maxBanks: Int, maxRanks: Int, dramSize: BigInt, lineBits: Int = 8) {
   require(isPow2(maxBanks))
+  println(s"Max banks is ${maxBanks}")
   println(s"Max ranks is ${maxRanks}")
+  println(s"Dram size is ${dramSize}")
   require(isPow2(maxRanks))
   require(isPow2(dramSize))
   require(isPow2(lineBits))

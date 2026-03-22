@@ -10,16 +10,18 @@ case object BaseParamsKey extends Field[BaseParams]
 case object LlcKey extends Field[Option[LLCParams]]
 case object DramOrganizationKey extends Field[DramOrganizationParams]
 
+// not this one
+
 // Instantiates an AXI4 memory model that executes (1 / clockDivision) of the frequency
 // of the RTL transformed model (Rocket Chip)
 class WithDefaultMemModel extends Config((site, here, up) => {
   case LlcKey => None
   // Only used if a DRAM model is requested
-  case DramOrganizationKey => DramOrganizationParams(maxBanks = 8, maxRanks = 1, dramSize = BigInt(1) << 34)
+  case DramOrganizationKey => DramOrganizationParams(maxBanks = 8, maxRanks = 1, dramSize = BigInt(1) << 32)
   // Default to a Latency-Bandwidth Pipe without and LLC model
   case BaseParamsKey => BaseParams(
-    maxReads = 16,
-    maxWrites = 16,
+    maxReads = 32,
+    maxWrites = 32,
     beatCounters = true,
     llcKey = site(LlcKey))
 
