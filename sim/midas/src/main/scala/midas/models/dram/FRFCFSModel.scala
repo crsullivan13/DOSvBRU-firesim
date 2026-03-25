@@ -127,8 +127,8 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   val canLegallyACT = checkRankBankLegality(_.canACT) _
   val canLegallyPRE = checkRankBankLegality(_.canPRE) _
 
-  val writesPending = refList.map(entry => entry.valid && !entry.bits.xaction.isWrite).reduce(_||_)
-  xactionScheduler.io.doesSchedHavePendingWrites := writesPending
+  val readsPending = refList.map(entry => entry.valid && !entry.bits.xaction.isWrite).reduce(_||_)
+  xactionScheduler.io.doesSchedHavePendingReads := readsPending
 
   columnArbiter.io.in <> refList.map({ entry =>
       val candidate = V2D(entry)

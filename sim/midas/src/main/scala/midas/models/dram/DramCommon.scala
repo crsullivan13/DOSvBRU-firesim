@@ -110,6 +110,8 @@ abstract class DRAMBaseConfig extends BaseConfig with HasDRAMMASConstants {
   def backendKey: DRAMBackendKey
 }
 
+// TODO: Make the address mapping handling changes better
+// TODO: Enable xor mappings
 abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with HasConsoleUtils {
 
   // The default assignment corresponde to a standard open-page policy
@@ -117,7 +119,7 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
   val bankAddr = Input(new ProgrammableSubAddr(
     maskBits = cfg.dramKey.bankBits,
     longName = "Bank Address",
-    defaultOffset = 9, // Assume 8KB page size
+    defaultOffset = 9,
     defaultMask = 7 // DDR3 Has 8 banks
   ))
 
@@ -129,7 +131,7 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
   ))
 
   //val defaultRowOffset = rankAddr.defaultOffset + log2Ceil(rankAddr.defaultMask + 1)
-  val defaultRowOffset = 16
+  val defaultRowOffset = 16 + log2Ceil(rankAddr.defaultMask + 1) // not always correct, but correct for the settings we care about
   val rowAddr = Input(new ProgrammableSubAddr(
     maskBits = cfg.dramKey.rowBits,
     longName = "Row Address",
