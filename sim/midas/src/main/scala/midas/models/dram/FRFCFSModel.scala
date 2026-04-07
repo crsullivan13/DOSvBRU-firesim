@@ -64,6 +64,25 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   xactionScheduler.io.pendingAWReq := pendingAWReq.value
   xactionScheduler.io.pendingWReq := pendingWReq.value
 
+  // when (nastiReq.ar.valid && !nastiReq.ar.ready) {
+  //   printf("DRAM_STALL AR backpressure t=%d\n", tCycle)
+  // }
+  // when (nastiReq.ar.fire) {
+  //   printf("DRAM_FLOW AR fire t=%d addr=0x%x\n", tCycle, nastiReq.ar.bits.addr)
+  // }
+  // when (nastiReq.aw.valid && !nastiReq.aw.ready) {
+  //   printf("DRAM_STALL AW backpressure t=%d\n", tCycle)
+  // }
+  // when (nastiReq.aw.fire) {
+  //   printf("DRAM_FLOW AW fire t=%d addr=0x%x\n", tCycle, nastiReq.aw.bits.addr)
+  // }
+  // when (nastiReq.w.valid && !nastiReq.w.ready) {
+  //   printf("DRAM_STALL W backpressure t=%d last=%d\n", tCycle, nastiReq.w.bits.last)
+  // }
+  // when (nastiReq.w.fire) {
+  //   printf("DRAM_FLOW W fire t=%d last=%d\n", tCycle, nastiReq.w.bits.last)
+  // }
+
   // Trackers for controller-level structural hazards
   val cmdBusBusy = Module(new DownCounter((maxDRAMTimingBits)))
   cmdBusBusy.io.decr := true.B
@@ -86,18 +105,24 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
   val newReference = Wire(Decoupled(new FirstReadyFCFSEntry(cfg)))
   newReference.valid := xactionScheduler.io.nextXaction.valid
   newReference.bits.decode(xactionScheduler.io.nextXaction.bits, io.mmReg)
-  when ( newReference.fire ) {
-    printf("DRAM: new ref fired in to collapsing buffer, bankGroup %d, bank %d\n", newReference.bits.bankGroupAddr, newReference.bits.bankAddr)
-  }
+  // when ( newReference.fire ) {
+  //   printf("DRAM: new ref fired in to collapsing buffer, bankGroup %d, bank %d\n", newReference.bits.bankGroupAddr, newReference.bits.bankAddr)
+  // }
 
   // Mark that the new reference hits an open row buffer, in case it missed the broadcast
   val rowHitsInRank = VecInit(rankStateTrackers map { tracker =>
     VecInit(tracker.io.rank.banks map { _.isRowHit(newReference.bits)}).asUInt })
 
   xactionScheduler.io.nextXaction.ready := newReference.ready
-  when ( xactionScheduler.io.nextXaction.valid ) {
-    printf("DRAM: nextXaction has valid data\n")
-  }
+  // when ( xactionScheduler.io.nextXaction.valid ) {
+  //   printf("DRAM: nextXaction has valid data\n")
+  // }
+  // when (xactionScheduler.io.nextXaction.valid && !xactionScheduler.io.nextXaction.ready) {
+  //   printf("DRAM_STALL nextXaction blocked t=%d isW=%d\n", tCycle, xactionScheduler.io.nextXaction.bits.xaction.isWrite)
+  // }
+  // when (xactionScheduler.io.nextXaction.fire) {
+  //   printf("DRAM_FLOW nextXaction fire t=%d isW=%d\n", tCycle, xactionScheduler.io.nextXaction.bits.xaction.isWrite)
+  // }
 
   val refBuffer = CollapsingBuffer(
     enq               = newReference,
@@ -244,22 +269,25 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
 
   // Useful only for the open-page policy. In closed page policy, precharges
   // are always issued as part of auto-pre commands on in preperation for refresh.
+  def readyEntryIndex(rank: UInt, bank: UInt, bankGroup: UInt): UInt = Cat(rank, bank, bankGroup)
+
   newReference.bits.mayPRE := // Last ready reference serviced or no other ready entries
     Mux(io.mmReg.openPagePolicy,
       // 1:The last ready request has been made to the bank
       newReference.bits.addrMatch(cmdRank, cmdBankGroup, cmdBank) && memReqDone && !otherReadyEntries ||
       // 2: There are no ready references, and a precharge is not being issued to the bank this cycle
-      !bankHasReadyEntries(Cat(newReference.bits.rankAddr, newReference.bits.bankAddr, newReference.bits.bankGroupAddr)) && 
+      !bankHasReadyEntries(readyEntryIndex(newReference.bits.rankAddr, newReference.bits.bankAddr, newReference.bits.bankGroupAddr)) &&
       !(selectedCmd === cmd_pre && newRefBankAddrMatch),
       false.B)
 
   // Check if the broadcasted cmdBank and cmdRank hit a ready entry
   when(memReqDone || selectedCmd === cmd_act) {
-    bankHasReadyEntries(Cat(cmdRank, cmdBank)) := memReqDone && otherReadyEntries || selectedCmd === cmd_act
+    bankHasReadyEntries(readyEntryIndex(cmdRank, cmdBank, cmdBankGroup)) :=
+      memReqDone && otherReadyEntries || selectedCmd === cmd_act
   }
 
   when (newReference.bits.isReady & newReference.fire){
-    bankHasReadyEntries(Cat(newReference.bits.rankAddr, newReference.bits.bankAddr, newReference.bits.bankGroupAddr)) := true.B
+    bankHasReadyEntries(readyEntryIndex(newReference.bits.rankAddr, newReference.bits.bankAddr, newReference.bits.bankGroupAddr)) := true.B
   }
 
   rankStateTrackers.zip(UIntToOH(cmdRank).asBools) foreach { case (state, cmdUsesThisRank)  =>
@@ -297,6 +325,37 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters) ext
 
   wResp <> backend.io.completedWrite
   rResp <> backend.io.completedRead
+
+  // when (backend.io.completedRead.valid && !backend.io.completedRead.ready) {
+  //   printf("DRAM_STALL completedRead blocked t=%d\n", tCycle)
+  // }
+  // when (backend.io.completedRead.fire) {
+  //   printf("DRAM_FLOW completedRead fire t=%d\n", tCycle)
+  // }
+  // when (backend.io.completedWrite.valid && !backend.io.completedWrite.ready) {
+  //   printf("DRAM_STALL completedWrite blocked t=%d\n", tCycle)
+  // }
+  // when (backend.io.completedWrite.fire) {
+  //   printf("DRAM_FLOW completedWrite fire t=%d\n", tCycle)
+  // }
+  // when (rResp.valid && !rResp.ready) {
+  //   printf("DRAM_STALL rResp blocked t=%d\n", tCycle)
+  // }
+  // when (rResp.fire) {
+  //   printf("DRAM_FLOW rResp fire t=%d\n", tCycle)
+  // }
+  // when (wResp.valid && !wResp.ready) {
+  //   printf("DRAM_STALL wResp blocked t=%d\n", tCycle)
+  // }
+  // when (wResp.fire) {
+  //   printf("DRAM_FLOW wResp fire t=%d\n", tCycle)
+  // }
+
+  val lastReadRespFire = RegInit(0.U(32.W))
+  when (rResp.fire) { lastReadRespFire := tCycle }
+  // when ((tCycle - lastReadRespFire) > 50000.U) {
+  //   printf("DRAM_WARN no rResp.fire for 50k cycles t=%d\n", tCycle)
+  // }
 
   // Dump the cmd stream
   val cmdMonitor = Module(new CommandBusMonitor())

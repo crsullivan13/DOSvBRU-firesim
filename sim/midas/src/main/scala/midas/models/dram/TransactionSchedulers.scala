@@ -130,11 +130,17 @@ class SplitXactionScheduler(depth: Int, cfg: BaseConfig)(implicit p: Parameters)
   io.req.ar.ready := transactionQueueArb.io.in(0).ready
   transactionQueueArb.io.in(0).bits.xaction := TransactionMetaData(io.req.ar.bits)
   transactionQueueArb.io.in(0).bits.addr := io.req.ar.bits.addr
+  when (io.req.ar.valid && !io.req.ar.ready) {
+    // printf("DRAM_STALL sched AR blocked\n")
+  }
 
   transactionQueueArb.io.in(1).valid := io.req.aw.valid
   io.req.aw.ready := transactionQueueArb.io.in(1).ready && writeRespQueue.io.enq.ready
   transactionQueueArb.io.in(1).bits.xaction := TransactionMetaData(io.req.aw.bits)
   transactionQueueArb.io.in(1).bits.addr := io.req.aw.bits.addr
+  when (io.req.aw.valid && !io.req.aw.ready) {
+    // printf("DRAM_STALL sched AW blocked\n")
+  }
 
   writeRespQueue.io.enq.bits.xaction := TransactionMetaData(io.req.aw.bits)
   writeRespQueue.io.enq.bits.addr := io.req.aw.bits.addr
@@ -152,7 +158,7 @@ class SplitXactionScheduler(depth: Int, cfg: BaseConfig)(implicit p: Parameters)
   // io.readForwardXaction.bits := transactionQueueArb.io.out.bits
 
   when ( writeAddressTable.io.isHit.valid ) {
-    printf("DRAM: Address lookup for %d\n", io.req.ar.bits.addr)
+    // printf("DRAM: Address lookup for %d\n", io.req.ar.bits.addr)
   }
 
   // assert(io.readForwardXaction.fire, "DRAM: Firing on read foward path")
@@ -168,26 +174,32 @@ class SplitXactionScheduler(depth: Int, cfg: BaseConfig)(implicit p: Parameters)
   readQueue.io.enq.valid := transactionQueueArb.io.out.valid && !transactionQueueArb.io.out.bits.xaction.isWrite
                              //&& !( writeAddressTable.io.isHit.bits && writeAddressTable.io.isHit.valid )
 
-  when ( readQueue.io.enq.fire ) {
-    printf("DRAM: enqueue a read\n")
-  }
+  // when ( readQueue.io.enq.fire ) {
+  //   printf("DRAM: enqueue a read\n")
+  // }
+  // when (readQueue.io.enq.valid && !readQueue.io.enq.ready) {
+  //   printf("DRAM_STALL readQueue full/blocking enq\n")
+  // }
 
-  when ( readQueue.io.deq.fire ) {
-    printf("DRAM: dequeue a read\n")
-  }
+  // when ( readQueue.io.deq.fire ) {
+  //   printf("DRAM: dequeue a read\n")
+  // }
 
-  when ( writeQueue.io.enq.fire ) {
-    printf("DRAM: enqueue a write\n")
+  // when ( writeQueue.io.enq.fire ) {
+  //   printf("DRAM: enqueue a write\n")
 
-    when ( writeAddressTable.io.newAddress.fire ) {
-      printf("DRAM: add address to write lookup %d\n", io.req.aw.bits.addr)
-    }
-  }
+  //   when ( writeAddressTable.io.newAddress.fire ) {
+  //     printf("DRAM: add address to write lookup %d\n", io.req.aw.bits.addr)
+  //   }
+  // }
 
   // Accept up to one additional write data request
   // TODO: More sensible model; maybe track a write buffer volume
   io.req.w.ready := io.pendingWReq <= io.pendingAWReq
   //io.req.w.ready := writeQueue.io.enq.ready
+  // when (io.req.w.valid && !io.req.w.ready) {
+  //   printf("DRAM_STALL sched W blocked pendingW=%d pendingAW=%d\n", io.pendingWReq, io.pendingAWReq)
+  // }
 
   println(s"DRAM: Max writes is ${cfg.maxWrites}")
 
@@ -204,14 +216,27 @@ class SplitXactionScheduler(depth: Int, cfg: BaseConfig)(implicit p: Parameters)
   val shouldUseLowWatermark = ( completedWrites.value >= 5.U ) && !io.doesSchedHavePendingWrites // this is reads just being lazy
   val isDraining = shouldDrainWrites && ( completedWrites.value > 0.U )
   shouldDrainWrites := shouldUseHighWatermark || shouldUseLowWatermark || isDraining
+  val prevShouldDrainWrites = RegNext(shouldDrainWrites, false.B)
+  // when (prevShouldDrainWrites =/= shouldDrainWrites) {
+  //   printf("DRAM_FLOW shouldDrainWrites=%d completedWrites=%d ackedWrites=%d readQ=%d writeQ=%d writeRespQ=%d\n",
+  //     shouldDrainWrites, completedWrites.value, ackedWrites.value,
+  //     readQueue.io.count, writeQueue.io.count, writeRespQueue.io.count)
+  // }
 
-    when ( !io.req.aw.ready && io.req.aw.valid ) {
-    printf("DRAM: write queue is not ready, count is %d\n", completedWrites.value)
-  }
+  //   when ( !io.req.aw.ready && io.req.aw.valid ) {
+  //   printf("DRAM: write queue is not ready, count is %d\n", completedWrites.value)
+  // }
 
-  when ( writeQueue.io.deq.fire && shouldDrainWrites ) {
-    printf("DRAM: dequeue writes, completed writes is %d\n", completedWrites.value)
-  }
+  // when ( writeQueue.io.deq.fire && shouldDrainWrites ) {
+  //   printf("DRAM: dequeue writes, completed writes is %d\n", completedWrites.value)
+  // }
+  // when (writeQueue.io.enq.valid && !writeQueue.io.enq.ready) {
+  //   printf("DRAM_STALL writeQueue full/blocking enq\n")
+  // }
+  // when (writeQueue.io.deq.valid && !(shouldDrainWrites && io.nextXaction.ready && ~completedWrites.empty)) {
+  //   printf("DRAM_STALL writeQueue deq blocked drain=%d nextReady=%d completedEmpty=%d\n",
+  //     shouldDrainWrites, io.nextXaction.ready, completedWrites.empty)
+  // }
 
   // Prevent release of oldest transaction if it is a write and it's data is not yet available
   val deqGate = DecoupledHelper(
@@ -226,18 +251,28 @@ class SplitXactionScheduler(depth: Int, cfg: BaseConfig)(implicit p: Parameters)
     ~completedWrites.empty
   )
 
-  when ( io.nextXaction.fire ) {
-    printf("DRAM: nextxaction fired %d\n", io.nextXaction.bits.xaction.isWrite)
-  }
+  // when ( io.nextXaction.fire ) {
+  //   printf("DRAM: nextxaction fired %d\n", io.nextXaction.bits.xaction.isWrite)
+  // }
   io.nextXaction.bits := Mux(shouldDrainWrites, writeQueue.io.deq.bits, readQueue.io.deq.bits)
   io.nextXaction.valid := Mux(shouldDrainWrites, writeDeqGate.fire(io.nextXaction.ready), deqGate.fire(io.nextXaction.ready) && !shouldDrainWrites)
   readQueue.io.deq.ready := deqGate.fire(readQueue.io.deq.valid) && !shouldDrainWrites //&& !io.doesSchedHavePendingWrites
   writeQueue.io.deq.ready := writeDeqGate.fire(writeQueue.io.deq.valid)
+  // when (readQueue.io.deq.valid && !io.nextXaction.ready) {
+  //   printf("DRAM_STALL readQueue deq blocked by downstream\n")
+  // }
 
-  when ( io.writeSkip.fire ) {
-    printf("DRAM: Write skip fired\n")
-  }
+  // when ( io.writeSkip.fire ) {
+  //   printf("DRAM: Write skip fired\n")
+  // }
   io.writeSkip.bits := writeRespQueue.io.deq.bits
   io.writeSkip.valid := writeRespQueue.io.deq.valid && ( ackedWrites.value > 0.U ) //( ( io.req.w.fire && io.req.w.bits.last ) )
   writeRespQueue.io.deq.ready := io.writeSkip.ready && ( ackedWrites.value > 0.U ) //( ( io.req.w.fire && io.req.w.bits.last ) )
+  // when (writeRespQueue.io.enq.valid && !writeRespQueue.io.enq.ready) {
+  //   printf("DRAM_STALL writeRespQueue full/blocking enq\n")
+  // }
+  // when (writeRespQueue.io.deq.valid && !(io.writeSkip.ready && (ackedWrites.value > 0.U))) {
+  //   printf("DRAM_STALL writeRespQueue deq blocked writeSkipReady=%d ackedWrites=%d\n",
+  //     io.writeSkip.ready, ackedWrites.value)
+  // }
 }
