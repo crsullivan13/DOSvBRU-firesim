@@ -119,7 +119,7 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
       maskBits      = cfg.dramKey.bankBits,
       longName      = "Bank Address",
       defaultOffset = 9, // Assume 8KB page size
-      defaultMask   = 7,  // DDR3 Has 8 banks
+      defaultMask   = 7, // DDR3 Has 8 banks
     )
   )
 
@@ -658,10 +658,12 @@ class RefreshUnit(key: DramOrganizationParams) extends Module {
 // # CASR, CASW is a proxy for cycles of read and write data (assuming fixed burst length)
 // 1 -  (ACT/(CASR + CASW)) = rank row buffer hit rate
 class RankPowerIO extends Bundle {
-  val allPreCycles = UInt(32.W) // # of cycles the rank has all banks precharged
-  val numCASR      = UInt(32.W) // Assume no burst-chop
-  val numCASW      = UInt(32.W) // Ditto above
-  val numACT       = UInt(32.W)
+  val allPreCycles  = UInt(32.W) // # of cycles the rank has all banks precharged
+  val numCASR       = UInt(32.W) // Assume no burst-chop
+  val numCASW       = UInt(32.W) // Ditto above
+  val numACT        = UInt(32.W)
+  val numWriteToRead = UInt(32.W) // # of write->read bus turnarounds
+  val numReadToWrite = UInt(32.W) // # of read->write bus turnarounds
 
   // TODO
   // CKE low & all banks pre
@@ -671,10 +673,12 @@ class RankPowerIO extends Bundle {
 object RankPowerIO {
   def apply(): RankPowerIO = {
     val w = Wire(new RankPowerIO)
-    w.allPreCycles := 0.U
-    w.numCASR      := 0.U
-    w.numCASW      := 0.U
-    w.numACT       := 0.U
+    w.allPreCycles   := 0.U
+    w.numCASR        := 0.U
+    w.numCASW        := 0.U
+    w.numACT         := 0.U
+    w.numWriteToRead := 0.U
+    w.numReadToWrite := 0.U
     w
   }
 }
@@ -689,15 +693,26 @@ class RankPowerMonitor(key: DramOrganizationParams) extends Module with HasDRAMM
   })
   val stats = RegInit(RankPowerIO())
 
+  // Tracks the last CAS issued to this rank so we can count bus turnarounds
+  val lastCASType = RegInit(cmd_nop)
+
   when(io.cmdUsesThisRank) {
     switch(io.selectedCmd) {
       is(cmd_act) {
         stats.numACT := stats.numACT + 1.U
       }
       is(cmd_casw) {
+        lastCASType   := cmd_casw
+        when(lastCASType === cmd_casr) {
+          stats.numReadToWrite := stats.numReadToWrite + 1.U
+        }
         stats.numCASW := stats.numCASW + 1.U
       }
       is(cmd_casr) {
+        lastCASType   := cmd_casr
+        when(lastCASType === cmd_casw) {
+          stats.numWriteToRead := stats.numWriteToRead + 1.U
+        }
         stats.numCASR := stats.numCASR + 1.U
       }
     }

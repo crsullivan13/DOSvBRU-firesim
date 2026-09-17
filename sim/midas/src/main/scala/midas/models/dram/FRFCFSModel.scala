@@ -10,12 +10,18 @@ import junctions.NastiKey
 import midas.widgets._
 
 case class FirstReadyFCFSConfig(
-  dramKey:               DramOrganizationParams,
-  schedulerWindowSize:   Int,
-  transactionQueueDepth: Int,
-  backendKey:            DRAMBackendKey = DRAMBackendKey(4, 4, DRAMMasEnums.backendLatencyBits),
-  params:                BaseParams,
+  dramKey:                     DramOrganizationParams,
+  schedulerWindowSize:         Int,
+  transactionQueueDepth:       Int,
+  backendKey:                  DRAMBackendKey = DRAMBackendKey(4, 4, DRAMMasEnums.backendLatencyBits),
+  params:                      BaseParams,
 ) extends DRAMBaseConfig {
+  require(transactionQueueDepth > 0, "FASED DRAM transaction queue depth must be non-zero")
+
+  // Write-drain watermarks, in units of completed (data-resident) writes
+  val writeHighWatermark:          Int = (transactionQueueDepth * 0.8).ceil.toInt
+  val writeLowWatermark:           Int = (transactionQueueDepth * 0.2).ceil.toInt
+  val writeOpportunisticWatermark: Int = (transactionQueueDepth * 0.15).ceil.toInt
 
   def elaborate()(implicit p: Parameters): FirstReadyFCFSModel = Module(new FirstReadyFCFSModel(this))
 }
@@ -65,7 +71,16 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters)
   val timings = io.mmReg.dramTimings
 
   val backend          = Module(new DRAMBackend(p(NastiKey), cfg.backendKey))
-  val xactionScheduler = Module(new UnifiedFIFOXactionScheduler(p(NastiKey), cfg.transactionQueueDepth, cfg))
+  val xactionScheduler = Module(
+    new SplitXactionScheduler(
+      p(NastiKey),
+      cfg.transactionQueueDepth,
+      cfg,
+      cfg.writeHighWatermark,
+      cfg.writeLowWatermark,
+      cfg.writeOpportunisticWatermark,
+    )
+  )
   xactionScheduler.io.req          <> nastiReq
   xactionScheduler.io.pendingAWReq := pendingAWReq.value
   xactionScheduler.io.pendingWReq  := pendingWReq.value
@@ -126,10 +141,13 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters)
   val canLegallyACT  = checkRankBankLegality(_.canACT) _
   val canLegallyPRE  = checkRankBankLegality(_.canPRE) _
 
+  val readsPending = refList.map(entry => entry.valid && !entry.bits.xaction.isWrite).reduce(_ || _)
+  xactionScheduler.io.doesSchedHavePendingReads := readsPending
+
   columnArbiter.io.in <> refList.map({ entry =>
     val candidate = V2D(entry)
     val canCASR   = canLegallyCASR(entry.bits) && backend.io.newRead.ready
-    val canCASW   = canLegallyCASW(entry.bits) && backend.io.newWrite.ready
+    val canCASW   = canLegallyCASW(entry.bits)
     candidate.valid := entry.valid && entry.bits.isReady &&
       Mux(entry.bits.xaction.isWrite, canCASW, canCASR) &&
       !rankWantsRef(entry.bits.rankAddrOH)
@@ -264,14 +282,23 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters)
   cmdBusBusy.io.set.bits  := timings.tCMD - 1.U
   cmdBusBusy.io.set.valid := selectedCmd =/= cmd_nop
 
+  // Writes are acknowledged as soon as they are accepted into the write queue,
+  // rather than when they drain out to the DRAM command bus.
+  val newWriteSkip = Wire(Decoupled(new FirstReadyFCFSEntry(p(NastiKey), cfg)))
+  newWriteSkip.valid                  := xactionScheduler.io.writeSkip.valid
+  xactionScheduler.io.writeSkip.ready := newWriteSkip.ready
+  newWriteSkip.bits.decode(xactionScheduler.io.writeSkip.bits, io.mmReg)
+  newWriteSkip.bits.isReady           := DontCare
+  newWriteSkip.bits.mayPRE            := DontCare
+
   backend.io.tCycle        := tCycle
   backend.io.newRead.bits  := ReadResponseMetaData(p(NastiKey), columnArbiter.io.out.bits.xaction)
   backend.io.newRead.valid := memReqDone && !columnArbiter.io.out.bits.xaction.isWrite
   backend.io.readLatency   := timings.tCAS + timings.tAL + io.mmReg.backendLatency
 
-  // For writes we send out the acknowledge immediately
-  backend.io.newWrite.bits  := WriteResponseMetaData(p(NastiKey), columnArbiter.io.out.bits.xaction)
-  backend.io.newWrite.valid := memReqDone && columnArbiter.io.out.bits.xaction.isWrite
+  backend.io.newWrite.bits  := WriteResponseMetaData(p(NastiKey), newWriteSkip.bits.xaction)
+  backend.io.newWrite.valid := newWriteSkip.valid
+  newWriteSkip.ready        := backend.io.newWrite.ready
   backend.io.writeLatency   := 1.U
 
   wResp <> backend.io.completedWrite
