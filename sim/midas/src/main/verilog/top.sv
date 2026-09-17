@@ -214,11 +214,11 @@ module emul(
 `endif // FSDB
     end
 
-    if ($value$plusargs("waveformfile=%s", waveformfile))
-    begin
-      $dumpfile(waveformfile);
-      $dumpvars(0, FPGATop);
-    end
+    //if ($value$plusargs("waveformfile=%s", waveformfile))
+    //begin
+    //  $dumpfile(waveformfile);
+    //  $dumpvars(0, FPGATop);
+    //end
 
 `ifdef FSDB
 `define WAVEFORMON $fsdbDumpon;
@@ -227,7 +227,7 @@ module emul(
 `define WAVEFORMON $vcdpluson(0); $vcdplusmemon(0);
 `define WAVEFORMCLOSE $vcdplusclose; $dumpoff;
 `else // FSDB/VCS
-`define WAVEFORMON $dumpon;
+  `define WAVEFORMON if ($value$plusargs("waveformfile=%s", waveformfile)) begin $dumpfile(waveformfile); $dumpvars(0, FPGATop); end;
 `define WAVEFORMCLOSE $dumpoff;
 `endif // FSDB/VCS
 

@@ -118,7 +118,7 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
     new ProgrammableSubAddr(
       maskBits      = cfg.dramKey.bankBits,
       longName      = "Bank Address",
-      defaultOffset = 13, // Assume 8KB page size
+      defaultOffset = 9, // Assume 8KB page size
       defaultMask   = 7,  // DDR3 Has 8 banks
     )
   )
@@ -284,6 +284,7 @@ case class DramOrganizationParams(maxBanks: Int, maxRanks: Int, dramSize: BigInt
   require(isPow2(dramSize))
   require(isPow2(lineBits))
   def bankBits = log2Up(maxBanks)
+  println(s"[DRAM CONFIG] Max ranks is $maxRanks")
   def rankBits = if (maxRanks == 1) 0 else log2Up(maxRanks)
   def rowBits  = log2Ceil(dramSize) - lineBits
   def maxRows  = 1 << rowBits
