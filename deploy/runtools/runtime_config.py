@@ -3,6 +3,8 @@ simulation tasks. """
 
 from __future__ import annotations
 
+import shlex
+
 import re
 from datetime import timedelta
 from time import strftime, gmtime
@@ -700,14 +702,31 @@ class RuntimeHWConfig:
         )
 
         deploy_dir = get_deploy_dir()
-        with InfoStreamLogger("stdout"), prefix(f"cd {deploy_dir}/../"), prefix(
-            create_export_string({"RISCV", "PATH", "LD_LIBRARY_PATH"})
-        ), prefix("source sourceme-manager.sh --skip-ssh-setup"), prefix("cd sim/"):
-            driverbuildcommand = f"make PLATFORM={self.get_platform()} TARGET_PROJECT={target_project} {extra_target_project_make_args(target_project, target_project_makefrag, deploy_dir)} DESIGN={design} TARGET_CONFIG={target_config} PLATFORM_CONFIG={platform_config} {self.get_driver_build_target()}"
-            buildresult = run(driverbuildcommand)
-            self.handle_failure(
-                buildresult, "driver build", "firesim/sim", driverbuildcommand
-            )
+        make_args = (f"PLATFORM={self.get_platform()} TARGET_PROJECT={target_project} "
+                     f"{extra_target_project_make_args(target_project, target_project_makefrag, deploy_dir)} DESIGN={design} "
+                     f"TARGET_CONFIG={target_config} PLATFORM_CONFIG={platform_config} "
+                     f"{self.get_driver_build_target()}")
+
+        compile_host = os.environ.get("FIRESIM_COMPILE_HOST")
+        if compile_host and self.driver_type_message == "Metasim":
+            agent = os.environ.get("SSH_AUTH_SOCK")
+            agent_env = f"SSH_AUTH_SOCK={shlex.quote(agent)} " if agent else ""
+            script = f"{deploy_dir}/../remote-build/remote-make.sh"
+            cmd = f"REMOTE_MAKE_BATCH=1 {agent_env}{script} {compile_host} -- {make_args}"
+            with InfoStreamLogger("stdout"):
+                buildresult = run(cmd)
+                self.handle_failure(
+                    buildresult, "driver build", "firesim/remote-build", cmd
+                )
+        else:
+            cmd = f"make {make_args}"
+            with InfoStreamLogger("stdout"), prefix(f"cd {deploy_dir}/../"), prefix(
+                create_export_string({"RISCV", "PATH", "LD_LIBRARY_PATH"})
+            ), prefix("source sourceme-manager.sh --skip-ssh-setup"), prefix("cd sim/"):
+                buildresult = run(cmd)
+                self.handle_failure(
+                    buildresult, "driver build", "firesim/sim", cmd
+                )
 
         self.driver_built = True
 

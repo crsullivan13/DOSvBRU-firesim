@@ -1,0 +1,4 @@
+.stage/
+# generated per user
+IMAGE_TAG
+manifest.txt

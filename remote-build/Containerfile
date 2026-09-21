@@ -1,0 +1,50 @@
+# FireSim compile image: a byte-for-byte snapshot of this machine's conda env.
+#
+# Build with build-image.sh, not directly. The build context is a staging dir
+# holding miniforge3/ (conda base, minus pkgs/ and envs/) and conda-env/
+# (chipyard/.conda-env). Both are placed at their original absolute paths, since
+# conda prefixes, env.sh and generated makefiles all embed them.
+#
+# Everything the build uses (gcc, make, sbt, java, verilator, firtool,
+# riscv-tools, git, rsync) comes from the conda env; the OS layer only supplies
+# glibc and basic userland, so it must match the host's Ubuntu release.
+
+FROM docker.io/library/ubuntu:22.04
+
+ARG HOME_DIR
+ARG CY_DIR
+# host's libc6 package version (dpkg-query), so the OS glibc patch level matches
+ARG LIBC_VERSION
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# Minimal userland. Anything a build turns out to need from /usr/bin goes here
+# (verify-image.sh --smoke is how you find out).
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        libc6=${LIBC_VERSION} \
+        libc-bin=${LIBC_VERSION} \
+        ca-certificates \
+        openssh-client \
+        procps \
+        file \
+        bc \
+        time \
+        xxd && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY miniforge3/ ${HOME_DIR}/miniforge3/
+COPY conda-env/ ${CY_DIR}/.conda-env/
+
+# The toolchain stays root-owned (read-only to builds); $HOME is sticky
+# world-writable so java/sbt/etc. can write dotfiles as the runtime user.
+# (No chown: a rootless build can't map UIDs outside the subuid range, and
+# --userns=keep-id supplies the real UID at run time.) Caches are mounted over it.
+RUN chmod 1777 ${HOME_DIR}
+
+ENV PATH=${HOME_DIR}/miniforge3/condabin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    HOME=${HOME_DIR} \
+    CONDA_BASE=${HOME_DIR}/miniforge3
+
+LABEL org.firesim.cy-dir=${CY_DIR}
