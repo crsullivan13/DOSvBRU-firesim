@@ -3,3 +3,6 @@
 // driven by separate ports.
 `verilator_config
 lint_off -rule MULTIDRIVEN
+
+tracing_off -scope "emul.FPGATop"
+tracing_on  -scope "emul.FPGATop.sim.target.FireSim__.chiptop0_.system_.coh_wrapper.l2"

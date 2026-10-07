@@ -118,6 +118,7 @@ class PointerChaser(implicit val p: Parameters) extends RawModule {
     fasedInstance.io.axi4  <> pointerChaser.io.nasti
     fasedInstance.io.reset := reset
     fasedInstance.io.clock := clock
+    fasedInstance.io.trigger := true.B
     PeekPokeBridge(clock, reset, ("io_startAddr", pointerChaser.io.startAddr), ("io_result", pointerChaser.io.result))
   }
 }

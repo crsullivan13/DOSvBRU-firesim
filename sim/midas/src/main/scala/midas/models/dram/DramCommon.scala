@@ -132,7 +132,8 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
     )
   )
 
-  val defaultRowOffset = rankAddr.defaultOffset + log2Ceil(rankAddr.defaultMask + 1)
+ // val defaultRowOffset = rankAddr.defaultOffset + log2Ceil(rankAddr.defaultMask + 1)
+  val defaultRowOffset = 16
   val rowAddr          = Input(
     new ProgrammableSubAddr(
       maskBits      = cfg.dramKey.rowBits,

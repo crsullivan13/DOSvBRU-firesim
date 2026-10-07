@@ -165,7 +165,8 @@ private:
                                           "Ranges_dataH",
                                           "Ranges_addr",
                                           "Ranges_enable",
-                                          "numRanges"};
+                                          "numRanges",
+                                          "roiActive"};
 
   bool has_latency_histograms() { return !histograms.empty(); };
   size_t mem_size;

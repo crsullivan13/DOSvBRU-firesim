@@ -30,6 +30,7 @@ class FASEDTargetIO(nastiParams: NastiParameters) extends Bundle {
   val axi4  = Flipped(new NastiIO(nastiParams))
   val reset = Input(Bool())
   val clock = Input(Clock())
+  val trigger = Input(Bool())
 }
 
 class FASEDBridge(argument: CompleteConfig) extends BlackBox with Bridge[HostPortIO[FASEDTargetIO]] {
@@ -41,11 +42,12 @@ class FASEDBridge(argument: CompleteConfig) extends BlackBox with Bridge[HostPor
 }
 
 object FASEDBridge {
-  def apply(clock: Clock, axi4: NastiIO, reset: Bool, cfg: CompleteConfig): FASEDBridge = {
+  def apply(clock: Clock, axi4: NastiIO, reset: Bool, cfg: CompleteConfig, trigger: Bool = true.B): FASEDBridge = {
     val ep = Module(new FASEDBridge(cfg))
     ep.io.reset := reset
     ep.io.clock := clock
     ep.io.axi4  <> axi4
+    ep.io.trigger := trigger
     ep
   }
 }

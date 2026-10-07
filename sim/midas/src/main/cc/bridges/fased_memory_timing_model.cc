@@ -133,6 +133,7 @@ FASEDMemoryTimingModel::FASEDMemoryTimingModel(
 }
 
 void FASEDMemoryTimingModel::profile() {
+  if (!read(addr_map.r_addr("roiActive"))) return;
   for (auto addr : profile_reg_addrs) {
     stats_file << read(addr) << ",";
   }

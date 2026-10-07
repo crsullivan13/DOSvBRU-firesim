@@ -21,6 +21,11 @@ abstract class MMRegIO(cfg: BaseConfig) extends Bundle with HasProgrammableRegis
   } else {
     (None, None)
   }
+  val (bytesReadHi, bytesReadLo, bytesWriteHi, bytesWriteLo) = if (cfg.params.xactionCounters) {
+    (Some(Output(UInt(32.W))), Some(Output(UInt(32.W))), Some(Output(UInt(32.W))), Some(Output(UInt(32.W))))
+  } else {
+    (None, None, None, None)
+  }
   val (totalReadBeats, totalWriteBeats) = if (cfg.params.beatCounters) {
     (Some(Output(UInt(32.W))), Some(Output(UInt(32.W))))
   } else {
@@ -155,6 +160,15 @@ abstract class TimingModel(val cfg: BaseConfig)(implicit val p: Parameters)
     when(pendingAWReq.inc) { totalWrites := totalWrites + 1.U }
     io.mmReg.totalReads.foreach { _ := totalReads }
     io.mmReg.totalWrites.foreach { _ := totalWrites }
+
+    val bytesRead = RegInit(0.U(64.W))
+    val bytesWrite = RegInit(0.U(64.W))
+    when(nastiReq.ar.fire) { bytesRead := bytesRead + ((nastiReq.ar.bits.len +& 1.U) << nastiReq.ar.bits.size) }
+    when(nastiReq.aw.fire) { bytesWrite := bytesWrite + ((nastiReq.aw.bits.len +& 1.U) << nastiReq.aw.bits.size) }
+    io.mmReg.bytesReadHi.foreach { _ := bytesRead(63,32) }
+    io.mmReg.bytesReadLo.foreach { _ := bytesRead(31,0) }
+    io.mmReg.bytesWriteHi.foreach { _ := bytesWrite(63,32) }
+    io.mmReg.bytesWriteLo.foreach { _ := bytesWrite(31,0) }
   }
 
   if (cfg.params.beatCounters) {

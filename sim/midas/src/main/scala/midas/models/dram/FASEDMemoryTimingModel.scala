@@ -407,6 +407,9 @@ class FASEDMemoryTimingModel(completeConfig: firesim.lib.bridges.CompleteConfig,
       attach(hCycle, "hostCycle", ReadOnly)
     }
 
+    val roiActive = RegEnable(hPort.hBits.trigger, false.B, targetFire)
+    attach(roiActive, "roiActive", ReadOnly, substruct = false)
+
     if (cfg.params.stallEventCounters) {
       val writeEgressStalls = RegInit(0.U(32.W))
       when(!bReady) {
