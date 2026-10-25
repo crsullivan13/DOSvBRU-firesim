@@ -1158,6 +1158,8 @@ class XilinxAlveoInstanceDeployManager(InstanceDeployManager):
 
     def change_all_pcie_perms(self) -> None:
         collect = run("lspci | grep -i xilinx")
+        for i in collect.splitlines():
+            print(repr(i))
 
         bdfs = [
             {"busno": "0x" + i[:2], "devno": "0x" + i[3:5], "capno": "0x" + i[6:7]}
@@ -1314,6 +1316,7 @@ class XilinxAlveoInstanceDeployManager(InstanceDeployManager):
                     .replace(".", ":")
                     .split(":")
                 )
+                self.instance_logger(f"{bdf}")
                 extra_args = f"+domain=0x0000 +bus=0x{bdf[0]} +device=0x{bdf[1]} +function=0x{bdf[2]} +bar=0x0 +pci-vendor=0x10ee +pci-device=0x903f"
             else:
                 extra_args = None
@@ -1412,6 +1415,8 @@ class XilinxVCU118InstanceDeployManager(InstanceDeployManager):
 
                 self.instance_logger(f"""Determine BDF for {slotno}""")
                 collect = run("lspci | grep -i xilinx")
+                for i in collect.splitlines():
+                    print(repr(i))
 
                 # TODO: is "Partial Reconfig Clear File" useful (see xvsecctl help)?
                 bdfs = [
@@ -1422,8 +1427,10 @@ class XilinxVCU118InstanceDeployManager(InstanceDeployManager):
                 ]
                 bdf = bdfs[slotno]
 
-                busno = bdf["busno"]
-                devno = bdf["devno"]
+                #busno = bdf["busno"]
+                #devno = bdf["devno"]
+                busno = "0x05"
+                devno = "0x00"
                 capno = bdf["capno"]
 
                 self.instance_logger(

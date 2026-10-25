@@ -708,7 +708,7 @@ class RuntimeHWConfig:
                      f"{self.get_driver_build_target()}")
 
         compile_host = os.environ.get("FIRESIM_COMPILE_HOST")
-        if compile_host and self.driver_type_message == "Metasim":
+        if compile_host:
             agent = os.environ.get("SSH_AUTH_SOCK")
             agent_env = f"SSH_AUTH_SOCK={shlex.quote(agent)} " if agent else ""
             script = f"{deploy_dir}/../remote-build/remote-make.sh"
