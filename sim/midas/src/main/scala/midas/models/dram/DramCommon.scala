@@ -116,10 +116,11 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
   // with 8K pages. All available ranks are enabled.
   val bankAddr = Input(
     new ProgrammableSubAddr(
-      maskBits      = cfg.dramKey.bankBits,
-      longName      = "Bank Address",
-      defaultOffset = 9, // Assume 8KB page size
-      defaultMask   = 7, // DDR3 Has 8 banks
+      maskBits         = cfg.dramKey.bankBits,
+      longName         = "Bank Address",
+      defaultOffset    = 14,
+      defaultMask      = 7, // DDR3 Has 8 banks
+      defaultXorOffset = 18,
     )
   )
 
@@ -133,7 +134,7 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
   )
 
  // val defaultRowOffset = rankAddr.defaultOffset + log2Ceil(rankAddr.defaultMask + 1)
-  val defaultRowOffset = 16
+  val defaultRowOffset = 18
   val rowAddr          = Input(
     new ProgrammableSubAddr(
       maskBits      = cfg.dramKey.rowBits,

@@ -58,15 +58,20 @@ class DualQueue[T <: Data](gen: => T, entries: Int) extends Module {
 }
 
 class ProgrammableSubAddr(
-  val maskBits:      Int,
-  val longName:      String,
-  val defaultOffset: BigInt,
-  val defaultMask:   BigInt,
+  val maskBits:         Int,
+  val longName:         String,
+  val defaultOffset:    BigInt,
+  val defaultMask:      BigInt,
+  val defaultXorOffset: BigInt = 0,
 ) extends Bundle
     with HasProgrammableRegisters {
-  val offset = UInt(32.W)       // TODO:fixme
-  val mask   = UInt(maskBits.W) // Must be contiguous high bits starting from LSB
-  def getSubAddr(fullAddr: UInt): UInt = (fullAddr >> offset) & mask
+  val offset    = UInt(32.W)       // TODO:fixme
+  val mask      = UInt(maskBits.W) // Must be contiguous high bits starting from LSB
+  val xorOffset = UInt(32.W)       // 0 disables XOR
+  def getSubAddr(fullAddr: UInt): UInt = {
+    val linear = fullAddr >> offset
+    Mux(xorOffset === 0.U, linear, linear ^ (fullAddr >> xorOffset)) & mask
+  }
 
   // Used to produce a bit vector of enables from a mask
   def maskToOH(): UInt = {
@@ -75,13 +80,15 @@ class ProgrammableSubAddr(
   }
 
   val registers = Seq(
-    (offset -> RuntimeSetting(defaultOffset, s"${longName} Offset", min = 0)),
-    (mask   -> RuntimeSetting(defaultMask, s"${longName} Mask", max = Some((1 << maskBits) - 1))),
+    (offset    -> RuntimeSetting(defaultOffset, s"${longName} Offset", min = 0)),
+    (mask      -> RuntimeSetting(defaultMask, s"${longName} Mask", max = Some((1 << maskBits) - 1))),
+    (xorOffset -> RuntimeSetting(defaultXorOffset, s"${longName} XOR Offset", min = 0)),
   )
 
   def forceSettings(offsetValue: BigInt, maskValue: BigInt): Unit = {
     regMap(offset).set(offsetValue)
     regMap(mask).set(maskValue)
+    regMap(xorOffset).set(0)
   }
 }
 
