@@ -16,7 +16,7 @@ class WithDefaultMemModel
     extends Config((site, _, _) => {
       case LlcKey              => None
       // Only used if a DRAM model is requested
-      case DramOrganizationKey => DramOrganizationParams(maxBanks = 8, maxRanks = 1, dramSize = BigInt(1) << 32)
+      case DramOrganizationKey => DramOrganizationParams(maxBanks = 16, maxRanks = 1, dramSize = BigInt(1) << 32)
       // Default to a Latency-Bandwidth Pipe without and LLC model
       case BaseParamsKey       => BaseParams(maxReads = 16, maxWrites = 16, beatCounters = true, llcKey = site(LlcKey))
 

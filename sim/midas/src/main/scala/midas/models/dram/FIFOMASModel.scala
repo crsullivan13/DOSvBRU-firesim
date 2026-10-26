@@ -81,14 +81,15 @@ class FIFOMASModel(cfg: FIFOMASConfig)(implicit p: Parameters) extends TimingMod
   val cmdBank       = WireInit(currentReference.bits.bankAddr)
   val cmdBankOH     = UIntToOH(cmdBank)
   val currentRowHit = currentBank.state === bank_active && cmdRow === currentBank.openRow
+  val currentBG     = cfg.dramKey.bankGroup(currentReference.bits.bankAddr)
   val casAutoPRE    = WireInit(false.B)
 
   val canCASW = backend.io.newWrite.ready && currentReference.valid &&
     currentRowHit && currentReference.bits.xaction.isWrite && currentBank.canCASW &&
-    currentRank.canCASW && !currentRank.wantREF
+    currentRank.canCASW(currentBG) && !currentRank.wantREF
 
   val canCASR = backend.io.newRead.ready && currentReference.valid && currentRowHit &&
-    !currentReference.bits.xaction.isWrite && currentBank.canCASR && currentRank.canCASR &&
+    !currentReference.bits.xaction.isWrite && currentBank.canCASR && currentRank.canCASR(currentBG) &&
     !currentRank.wantREF
 
   val refreshUnit = Module(new RefreshUnit(cfg.dramKey)).io
@@ -109,7 +110,7 @@ class FIFOMASModel(cfg: FIFOMASConfig)(implicit p: Parameters) extends TimingMod
       selectedCmd := cmd_casr
     }.elsewhen(canCASW) {
       selectedCmd := cmd_casw
-    }.elsewhen(currentReference.valid && currentBank.canACT && currentRank.canACT && !currentRank.wantREF) {
+    }.elsewhen(currentReference.valid && currentBank.canACT && currentRank.canACT(currentBG) && !currentRank.wantREF) {
       selectedCmd := cmd_act
     }.elsewhen(currentReference.valid && !currentRowHit && currentBank.canPRE && currentRank.canPRE) {
       selectedCmd := cmd_pre
@@ -121,7 +122,7 @@ class FIFOMASModel(cfg: FIFOMASConfig)(implicit p: Parameters) extends TimingMod
     }.elsewhen(canCASW) {
       selectedCmd := cmd_casw
       casAutoPRE  := true.B
-    }.elsewhen(currentReference.valid && currentBank.canACT && currentRank.canACT && !currentRank.wantREF) {
+    }.elsewhen(currentReference.valid && currentBank.canACT && currentRank.canACT(currentBG) && !currentRank.wantREF) {
       selectedCmd := cmd_act
     }
   }
@@ -158,11 +159,12 @@ class FIFOMASModel(cfg: FIFOMASConfig)(implicit p: Parameters) extends TimingMod
 
   // Dump the command stream
   val cmdMonitor = Module(new CommandBusMonitor())
-  cmdMonitor.io.cmd     := selectedCmd
-  cmdMonitor.io.rank    := cmdRank
-  cmdMonitor.io.bank    := cmdBank
-  cmdMonitor.io.row     := cmdRow
-  cmdMonitor.io.autoPRE := casAutoPRE
+  cmdMonitor.io.cmd       := selectedCmd
+  cmdMonitor.io.rank      := cmdRank
+  cmdMonitor.io.bankGroup := cfg.dramKey.bankGroup(cmdBank)
+  cmdMonitor.io.bank      := cfg.dramKey.bankInGroup(cmdBank)
+  cmdMonitor.io.row       := cmdRow
+  cmdMonitor.io.autoPRE   := casAutoPRE
 
   val powerStats = (rankStateTrackers).zip(UIntToOH(cmdRank).asBools).map { case (rankState, cmdUsesThisRank) =>
     val powerMonitor = Module(new RankPowerMonitor(cfg.dramKey))

@@ -41,19 +41,22 @@ class DRAMProgrammableTimings
   val tCAS  = UInt(maxDRAMTimingBits.W)
   val tCMD  = UInt(maxDRAMTimingBits.W)
   val tCWD  = UInt(maxDRAMTimingBits.W)
-  val tCCD  = UInt(maxDRAMTimingBits.W)
+  val tCCD_S = UInt(maxDRAMTimingBits.W)
+  val tCCD_L = UInt(maxDRAMTimingBits.W)
   val tFAW  = UInt(maxDRAMTimingBits.W)
   val tRAS  = UInt(maxDRAMTimingBits.W)
   val tREFI = UInt(tREFIBits.W)
   val tRC   = UInt(maxDRAMTimingBits.W)
   val tRCD  = UInt(maxDRAMTimingBits.W)
   val tRFC  = UInt(tRFCBits.W)
-  val tRRD  = UInt(maxDRAMTimingBits.W)
+  val tRRD_S = UInt(maxDRAMTimingBits.W)
+  val tRRD_L = UInt(maxDRAMTimingBits.W)
   val tRP   = UInt(maxDRAMTimingBits.W)
   val tRTP  = UInt(maxDRAMTimingBits.W)
   val tRTRS = UInt(maxDRAMTimingBits.W)
   val tWR   = UInt(maxDRAMTimingBits.W)
-  val tWTR  = UInt(maxDRAMTimingBits.W)
+  val tWTR_S = UInt(maxDRAMTimingBits.W)
+  val tWTR_L = UInt(maxDRAMTimingBits.W)
 
   def tCAS2tCWL(tCAS: BigInt) = {
     require(tCAS > 4)
@@ -64,25 +67,29 @@ class DRAMProgrammableTimings
     else tCAS
   }
 
-  // Defaults are set to sg093, x8, 2048Mb density (1GHz clock)
+  // Defaults are DDR4-2133P (15-15-15), x8, 4Gb density, 1KB page, rounded up to a 1GHz clock.
+  // There are no DDR4 part JSONs, so only the hardware defaults are supported.
   val registers = Seq(
-    tAL   -> RuntimeSetting(0, "Additive Latency"),
-    tCAS  -> JSONSetting(14, "CAS Latency", { _("CL_TIME") }),
-    tCMD  -> JSONSetting(1, "Command Transport Time", { _ => 1 }),
-    tCWD  -> JSONSetting(10, "Write CAS Latency", { lut => tCAS2tCWL(lut("CL_TIME")) }),
-    tCCD  -> JSONSetting(4, "Column-to-Column Delay", { _("TCCD") }),
-    tFAW  -> JSONSetting(25, "Four row-Activation Window", { _("TFAW") }),
-    tRAS  -> JSONSetting(33, "Row Access Strobe Delay", { _("TRAS_MIN") }),
-    tREFI -> JSONSetting(7800, "REFresh Interval", { _("TRFC_MAX") / 9 }),
-    tRC   -> JSONSetting(47, "Row Cycle time", { _("TRC") }),
-    tRCD  -> JSONSetting(14, "Row-to-Column Delay", { _("TRCD") }),
-    tRFC  -> JSONSetting(160, "ReFresh Cycle time", { _("TRFC_MIN") }),
-    tRRD  -> JSONSetting(8, "Row-to-Row Delay", { _("TRRD") }),
-    tRP   -> JSONSetting(14, "Row-Precharge delay", { _("TRP") }),
-    tRTP  -> JSONSetting(8, "Read-To-Precharge delay", { lut => lut("TRTP").max(lut("TRTP_TCK")) }),
-    tRTRS -> JSONSetting(2, "Rank-to-Rank Switching Time", { _ => 2 }), // FIXME
-    tWR   -> JSONSetting(15, "Write-Recovery time", { _("TWR") }),
-    tWTR  -> JSONSetting(8, "Write-To-Read Turnaround Time", { _("TWTR") }),
+    tAL    -> RuntimeSetting(0, "Additive Latency"),
+    tCAS   -> JSONSetting(15, "CAS Latency", { _("CL_TIME") }),
+    tCMD   -> JSONSetting(1, "Command Transport Time", { _ => 1 }),
+    tCWD   -> JSONSetting(11, "Write CAS Latency", { lut => tCAS2tCWL(lut("CL_TIME")) }),
+    tCCD_S -> JSONSetting(4, "Column-to-Column Delay Short", { _("TCCD_S") }),
+    tCCD_L -> JSONSetting(6, "Column-to-Column Delay Long", { _("TCCD_L") }),
+    tFAW   -> JSONSetting(21, "Four row-Activation Window", { _("TFAW") }),
+    tRAS   -> JSONSetting(33, "Row Access Strobe Delay", { _("TRAS_MIN") }),
+    tREFI  -> JSONSetting(7800, "REFresh Interval", { _("TRFC_MAX") / 9 }),
+    tRC    -> JSONSetting(48, "Row Cycle time", { _("TRC") }),
+    tRCD   -> JSONSetting(15, "Row-to-Column Delay", { _("TRCD") }),
+    tRFC   -> JSONSetting(260, "ReFresh Cycle time", { _("TRFC_MIN") }),
+    tRRD_S -> JSONSetting(4, "Row-to-Row Delay Short", { _("TRRD_S") }),
+    tRRD_L -> JSONSetting(6, "Row-to-Row Delay Long", { _("TRRD_L") }),
+    tRP    -> JSONSetting(15, "Row-Precharge delay", { _("TRP") }),
+    tRTP   -> JSONSetting(8, "Read-To-Precharge delay", { lut => lut("TRTP").max(lut("TRTP_TCK")) }),
+    tRTRS  -> JSONSetting(2, "Rank-to-Rank Switching Time", { _ => 2 }), // FIXME
+    tWR    -> JSONSetting(16, "Write-Recovery time", { _("TWR") }),
+    tWTR_S -> JSONSetting(3, "Write-To-Read Turnaround Time Short", { _("TWTR_S") }),
+    tWTR_L -> JSONSetting(8, "Write-To-Read Turnaround Time Long", { _("TWTR_L") }),
   )
 
   def setDependentRegisters(lut: Map[String, JSONField], freqMHz: BigInt): Unit = {
@@ -114,12 +121,13 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
 
   // The default assignment corresponde to a standard open-page policy
   // with 8K pages. All available ranks are enabled.
+  // The low bankGroupBits of the bank address select the bank group.
   val bankAddr = Input(
     new ProgrammableSubAddr(
       maskBits         = cfg.dramKey.bankBits,
       longName         = "Bank Address",
       defaultOffset    = 14,
-      defaultMask      = 7, // DDR3 Has 8 banks
+      defaultMask      = cfg.dramKey.maxBanks - 1,
       defaultXorOffset = 18,
     )
   )
@@ -280,12 +288,22 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
   }
 }
 
-case class DramOrganizationParams(maxBanks: Int, maxRanks: Int, dramSize: BigInt, lineBits: Int = 8) {
+case class DramOrganizationParams(
+  maxBanks:      Int,
+  maxRanks:      Int,
+  dramSize:      BigInt,
+  lineBits:      Int = 8,
+  maxBankGroups: Int = 4,
+) {
   require(isPow2(maxBanks))
+  require(isPow2(maxBankGroups) && maxBanks >= maxBankGroups)
   require(isPow2(maxRanks))
   require(isPow2(dramSize))
   require(isPow2(lineBits))
-  def bankBits = log2Up(maxBanks)
+  def bankBits      = log2Up(maxBanks)
+  def bankGroupBits = log2Ceil(maxBankGroups)
+  def bankGroup(bank: UInt): UInt = if (bankGroupBits == 0) 0.U else bank(bankGroupBits - 1, 0)
+  def bankInGroup(bank: UInt): UInt = bank >> bankGroupBits
   println(s"[DRAM CONFIG] Max ranks is $maxRanks")
   def rankBits = if (maxRanks == 1) 0 else log2Up(maxRanks)
   def rowBits  = log2Ceil(dramSize) - lineBits
@@ -297,6 +315,14 @@ trait CommandLegalBools {
   val canCASR = Output(Bool())
   val canPRE  = Output(Bool())
   val canACT  = Output(Bool())
+}
+
+trait RankCommandLegalBools {
+  val key: DramOrganizationParams
+  val canCASW = Output(Vec(key.maxBankGroups, Bool()))
+  val canCASR = Output(Vec(key.maxBankGroups, Bool()))
+  val canPRE  = Output(Bool())
+  val canACT  = Output(Vec(key.maxBankGroups, Bool()))
 }
 
 trait HasLegalityUpdateIO {
@@ -418,11 +444,11 @@ class BankStateTracker(key: DramOrganizationParams) extends Module with HasDRAMM
           state                     := bank_idle
           nextLegalACT.io.set.valid := true.B
           nextLegalACT.io.set.bits  := io.timings.tCWD + io.timings.tAL + io.timings.tWR +
-            io.timings.tCCD + io.timings.tRP + 1.U
+            io.timings.tCCD_S + io.timings.tRP + 1.U
         }.otherwise {
           nextLegalPRE.io.set.valid := true.B
           nextLegalPRE.io.set.bits  := io.timings.tCWD + io.timings.tAL + io.timings.tWR +
-            io.timings.tCCD - 1.U
+            io.timings.tCCD_S - 1.U
         }
       }
       is(cmd_pre) {
@@ -452,7 +478,7 @@ class BankStateTracker(key: DramOrganizationParams) extends Module with HasDRAMM
 // timing and resource constraints are met. The controller must also ensure CAS
 // commands use the open ROW.
 
-class RankStateTrackerO(val key: DramOrganizationParams) extends Bundle with CommandLegalBools {
+class RankStateTrackerO(val key: DramOrganizationParams) extends Bundle with RankCommandLegalBools {
   import DRAMMasEnums._
   val canREF  = Output(Bool())
   val wantREF = Output(Bool())
@@ -476,62 +502,89 @@ class RankStateTracker(key: DramOrganizationParams) extends Module with HasDRAMM
   val io = IO(new RankStateTrackerIO(key))
 
   val nextLegalPRE  = Module(new DownCounter(maxDRAMTimingBits))
-  val nextLegalACT  = Module(new DownCounter(tRFCBits))
-  val nextLegalCASR = Module(new DownCounter(maxDRAMTimingBits))
-  val nextLegalCASW = Module(new DownCounter(maxDRAMTimingBits))
+  val nextLegalACT  = Seq.fill(key.maxBankGroups)(Module(new DownCounter(tRFCBits)))
+  val nextLegalCASR = Seq.fill(key.maxBankGroups)(Module(new DownCounter(maxDRAMTimingBits)))
+  val nextLegalCASW = Seq.fill(key.maxBankGroups)(Module(new DownCounter(maxDRAMTimingBits)))
   val tREFI         = RegInit(0.U(tREFIBits.W))
   val state         = RegInit(rank_active)
   val wantREF       = RegInit(false.B)
 
-  Seq(nextLegalPRE, nextLegalCASW, nextLegalCASR, nextLegalACT).foreach { mod =>
+  (nextLegalPRE +: (nextLegalACT ++ nextLegalCASR ++ nextLegalCASW)).foreach { mod =>
     mod.io.decr      := true.B
     mod.io.set.valid := false.B
     mod.io.set.bits  := DontCare
   }
+
+  // Bank group of the issued command, one-hot
+  val cmdBankGroupOH = VecInit(Seq.tabulate(key.maxBankGroups) { g =>
+    (g until key.maxBanks by key.maxBankGroups).map(io.cmdBankOH(_)).reduce(_ || _)
+  })
 
   val tFAWcheck = Module(new Queue(io.tCycle.cloneType, entries = 4))
   tFAWcheck.io.enq.valid := io.cmdUsesThisRank && io.selectedCmd === cmd_act
   tFAWcheck.io.enq.bits  := io.tCycle + io.timings.tFAW
   tFAWcheck.io.deq.ready := io.tCycle === tFAWcheck.io.deq.bits
 
+  // tCCD_S doubles as BL/2 (the data burst duration)
   when(io.cmdUsesThisRank && io.selectedCmd === cmd_act) {
-    assert(io.rank.canACT, "Rank Timing Violation: Controller issued ACT command illegally")
-    nextLegalACT.io.set.valid := true.B
-    nextLegalACT.io.set.bits  := io.timings.tRRD - 1.U
+    assert(Mux1H(cmdBankGroupOH, io.rank.canACT), "Rank Timing Violation: Controller issued ACT command illegally")
+    nextLegalACT.zip(cmdBankGroupOH).foreach { case (act, sameBG) =>
+      act.io.set.valid := true.B
+      act.io.set.bits  := Mux(sameBG, io.timings.tRRD_L, io.timings.tRRD_S) - 1.U
+    }
 
   }.elsewhen(io.selectedCmd === cmd_casr) {
-    assert(!io.cmdUsesThisRank || io.rank.canCASR, "Rank Timing Violation: Controller issued CASR command illegally")
-    nextLegalCASR.io.set.valid := true.B
-    nextLegalCASR.io.set.bits  := io.timings.tCCD +
-      Mux(io.cmdUsesThisRank, 0.U, io.timings.tRTRS) - 1.U
+    assert(
+      !io.cmdUsesThisRank || Mux1H(cmdBankGroupOH, io.rank.canCASR),
+      "Rank Timing Violation: Controller issued CASR command illegally",
+    )
+    nextLegalCASR.zip(cmdBankGroupOH).foreach { case (casr, sameBG) =>
+      casr.io.set.valid := true.B
+      casr.io.set.bits  := Mux(
+        io.cmdUsesThisRank,
+        Mux(sameBG, io.timings.tCCD_L, io.timings.tCCD_S),
+        io.timings.tCCD_S + io.timings.tRTRS,
+      ) - 1.U
+    }
 
     // TODO: tRTRS isn't the correct parameter here, but need a two cycle delay in DDR3
-    nextLegalCASW.io.set.valid := true.B
-    nextLegalCASW.io.set.bits  := io.timings.tCAS + io.timings.tCCD - io.timings.tCWD +
-      io.timings.tRTRS - 1.U
+    nextLegalCASW.foreach { casw =>
+      casw.io.set.valid := true.B
+      casw.io.set.bits  := io.timings.tCAS + io.timings.tCCD_S - io.timings.tCWD +
+        io.timings.tRTRS - 1.U
+    }
 
   }.elsewhen(io.selectedCmd === cmd_casw) {
-    assert(!io.cmdUsesThisRank || io.rank.canCASW, "Rank Timing Violation: Controller issued CASW command illegally")
-    nextLegalCASR.io.set.valid := true.B
-    nextLegalCASR.io.set.bits  := Mux(
-      io.cmdUsesThisRank,
-      io.timings.tCWD + io.timings.tCCD + io.timings.tWTR - 1.U,
-      io.timings.tCWD + io.timings.tCCD + io.timings.tRTRS - io.timings.tCAS - 1.U,
+    assert(
+      !io.cmdUsesThisRank || Mux1H(cmdBankGroupOH, io.rank.canCASW),
+      "Rank Timing Violation: Controller issued CASW command illegally",
     )
+    nextLegalCASR.zip(cmdBankGroupOH).foreach { case (casr, sameBG) =>
+      casr.io.set.valid := true.B
+      casr.io.set.bits  := Mux(
+        io.cmdUsesThisRank,
+        io.timings.tCWD + io.timings.tCCD_S + Mux(sameBG, io.timings.tWTR_L, io.timings.tWTR_S) - 1.U,
+        io.timings.tCWD + io.timings.tCCD_S + io.timings.tRTRS - io.timings.tCAS - 1.U,
+      )
+    }
 
     // TODO: OST
-    nextLegalCASW.io.set.valid := true.B
-    nextLegalCASW.io.set.bits  := io.timings.tCCD - 1.U
+    nextLegalCASW.zip(cmdBankGroupOH).foreach { case (casw, sameBG) =>
+      casw.io.set.valid := true.B
+      casw.io.set.bits  := Mux(io.cmdUsesThisRank && sameBG, io.timings.tCCD_L, io.timings.tCCD_S) - 1.U
+    }
 
   }.elsewhen(io.cmdUsesThisRank && io.selectedCmd === cmd_pre) {
     assert(io.rank.canPRE, "Rank Timing Violation: Controller issued PRE command illegally")
 
   }.elsewhen(io.cmdUsesThisRank && io.selectedCmd === cmd_ref) {
     assert(io.rank.canREF, "Rank Timing Violation: Controller issued REF command illegally")
-    wantREF                   := false.B
-    state                     := rank_refresh
-    nextLegalACT.io.set.valid := true.B
-    nextLegalACT.io.set.bits  := io.timings.tRFC - 1.U
+    wantREF := false.B
+    state   := rank_refresh
+    nextLegalACT.foreach { act =>
+      act.io.set.valid := true.B
+      act.io.set.bits  := io.timings.tRFC - 1.U
+    }
   }
 
   // Disable refresion by setting tREFI = 0
@@ -542,7 +595,8 @@ class RankStateTracker(key: DramOrganizationParams) extends Module with HasDRAMM
     tREFI := tREFI + 1.U
   }
 
-  when(state === rank_refresh && nextLegalACT.io.current === 1.U) {
+  // All ACT counters are set to tRFC on refresh, so checking one suffices
+  when(state === rank_refresh && nextLegalACT.head.io.current === 1.U) {
     state := rank_active
   }
 
@@ -558,10 +612,10 @@ class RankStateTracker(key: DramOrganizationParams) extends Module with HasDRAMM
   }
 
   io.rank.canREF  := (bankTrackers.map { _.out.canACT }.reduce { _ && _ })
-  io.rank.canCASR := nextLegalCASR.io.idle
-  io.rank.canCASW := nextLegalCASW.io.idle
+  io.rank.canCASR := VecInit(nextLegalCASR.map(_.io.idle))
+  io.rank.canCASW := VecInit(nextLegalCASW.map(_.io.idle))
   io.rank.canPRE  := nextLegalPRE.io.idle
-  io.rank.canACT  := nextLegalACT.io.idle && tFAWcheck.io.enq.ready
+  io.rank.canACT  := VecInit(nextLegalACT.map(_.io.idle && tFAWcheck.io.enq.ready))
   io.rank.wantREF := wantREF
   io.rank.state   := state
 }
@@ -570,8 +624,9 @@ class CommandBusMonitor extends Module {
   import DRAMMasEnums._
   val io = IO(new Bundle {
     val cmd     = Input(cmd_nop.cloneType)
-    val rank    = Input(UInt())
-    val bank    = Input(UInt())
+    val rank      = Input(UInt())
+    val bankGroup = Input(UInt())
+    val bank      = Input(UInt())
     val row     = Input(UInt())
     val autoPRE = Input(Bool())
   })
@@ -586,13 +641,22 @@ class CommandBusMonitor extends Module {
 
   switch(io.cmd) {
     is(cmd_act) {
-      printf("activate(%d, %d, %d); // %d\n", io.rank, io.bank, io.row, cycleCounter)
+      printf("activate(%d, %d, %d, %d); // %d\n", io.rank, io.bankGroup, io.bank, io.row, cycleCounter)
     }
     is(cmd_casr) {
       val autoPRE   = io.autoPRE
       val burstChop = false.B
       val column    = 0.U // Don't care since we aren't checking data
-      printf("read(%d, %d, %d, %x, %x); // %d\n", io.rank, io.bank, column, autoPRE, burstChop, cycleCounter)
+      printf(
+        "read(%d, %d, %d, %d, %x, %x); // %d\n",
+        io.rank,
+        io.bankGroup,
+        io.bank,
+        column,
+        autoPRE,
+        burstChop,
+        cycleCounter,
+      )
     }
     is(cmd_casw) {
       val autoPRE   = io.autoPRE
@@ -601,8 +665,9 @@ class CommandBusMonitor extends Module {
       val mask      = 0.U // Don't care since we aren't checking data
       val data      = 0.U // Don't care since we aren't checking data
       printf(
-        "write(%d, %d, %d, %x, %x, %d, %d); // %d\n",
+        "write(%d, %d, %d, %d, %x, %x, %d, %d); // %d\n",
         io.rank,
+        io.bankGroup,
         io.bank,
         column,
         autoPRE,
@@ -617,7 +682,7 @@ class CommandBusMonitor extends Module {
     }
     is(cmd_pre) {
       val preAll = false.B
-      printf("precharge(%d,%d,%d); // %d\n", io.rank, io.bank, preAll, cycleCounter)
+      printf("precharge(%d,%d,%d,%d); // %d\n", io.rank, io.bankGroup, io.bank, preAll, cycleCounter)
     }
   }
 }

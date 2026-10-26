@@ -125,10 +125,15 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters)
   // Selects the oldest candidate from all ready references that can legally request a CAS
   val columnArbiter = Module(new Arbiter(refList.head.bits.cloneType, refList.size))
 
-  def checkRankBankLegality(getField: CommandLegalBools => Bool)(masEntry: FirstReadyFCFSEntry): Bool = {
-    val bankFields = rankStateTrackers.map { rank => VecInit(rank.io.rank.banks.map(getField)).asUInt }
+  def checkRankBankLegality(
+    getBankField: CommandLegalBools => Bool,
+    getRankField: (RankStateTrackerO, UInt) => Bool,
+  )(masEntry:     FirstReadyFCFSEntry
+  ): Bool = {
+    val bankFields = rankStateTrackers.map { rank => VecInit(rank.io.rank.banks.map(getBankField)).asUInt }
     val bankLegal  = (Mux1H(masEntry.rankAddrOH, bankFields) & masEntry.bankAddrOH).orR
-    val rankFields = VecInit(rankStateTrackers.map { rank => getField(rank.io.rank) }).asUInt
+    val bankGroup  = cfg.dramKey.bankGroup(masEntry.bankAddr)
+    val rankFields = VecInit(rankStateTrackers.map { rank => getRankField(rank.io.rank, bankGroup) }).asUInt
     val rankLegal  = (masEntry.rankAddrOH & rankFields).orR
     rankLegal && bankLegal
   }
@@ -136,10 +141,10 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters)
   def rankWantsRef(rankAddrOH: UInt): Bool =
     (rankAddrOH & (VecInit(rankStateTrackers.map { _.io.rank.wantREF }).asUInt)).orR
 
-  val canLegallyCASR = checkRankBankLegality(_.canCASR) _
-  val canLegallyCASW = checkRankBankLegality(_.canCASW) _
-  val canLegallyACT  = checkRankBankLegality(_.canACT) _
-  val canLegallyPRE  = checkRankBankLegality(_.canPRE) _
+  val canLegallyCASR = checkRankBankLegality(_.canCASR, (rank, bg) => rank.canCASR(bg)) _
+  val canLegallyCASW = checkRankBankLegality(_.canCASW, (rank, bg) => rank.canCASW(bg)) _
+  val canLegallyACT  = checkRankBankLegality(_.canACT, (rank, bg) => rank.canACT(bg)) _
+  val canLegallyPRE  = checkRankBankLegality(_.canPRE, (rank, _) => rank.canPRE) _
 
   val readsPending = refList.map(entry => entry.valid && !entry.bits.xaction.isWrite).reduce(_ || _)
   xactionScheduler.io.doesSchedHavePendingReads := readsPending
@@ -306,11 +311,12 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters)
 
   // Dump the cmd stream
   val cmdMonitor = Module(new CommandBusMonitor())
-  cmdMonitor.io.cmd     := selectedCmd
-  cmdMonitor.io.rank    := cmdRank
-  cmdMonitor.io.bank    := cmdBank
-  cmdMonitor.io.row     := cmdRow
-  cmdMonitor.io.autoPRE := casAutoPRE
+  cmdMonitor.io.cmd       := selectedCmd
+  cmdMonitor.io.rank      := cmdRank
+  cmdMonitor.io.bankGroup := cfg.dramKey.bankGroup(cmdBank)
+  cmdMonitor.io.bank      := cfg.dramKey.bankInGroup(cmdBank)
+  cmdMonitor.io.row       := cmdRow
+  cmdMonitor.io.autoPRE   := casAutoPRE
 
   val powerStats = (rankStateTrackers).zip(UIntToOH(cmdRank).asBools).map { case (rankState, cmdUsesThisRank) =>
     val powerMonitor = Module(new RankPowerMonitor(cfg.dramKey))
