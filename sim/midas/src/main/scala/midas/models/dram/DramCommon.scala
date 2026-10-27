@@ -126,9 +126,9 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
     new ProgrammableSubAddr(
       maskBits         = cfg.dramKey.bankBits,
       longName         = "Bank Address",
-      defaultOffset    = 14,
+      defaultOffset    = 13,
       defaultMask      = cfg.dramKey.maxBanks - 1,
-      defaultXorOffset = 18,
+      defaultXorOffset = 17,
     )
   )
 
@@ -142,7 +142,7 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
   )
 
  // val defaultRowOffset = rankAddr.defaultOffset + log2Ceil(rankAddr.defaultMask + 1)
-  val defaultRowOffset = 18
+  val defaultRowOffset = 17
   val rowAddr          = Input(
     new ProgrammableSubAddr(
       maskBits      = cfg.dramKey.rowBits,
