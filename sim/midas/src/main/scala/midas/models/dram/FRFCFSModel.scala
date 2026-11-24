@@ -9,33 +9,64 @@ import org.chipsalliance.cde.config.Parameters
 import junctions.NastiKey
 import midas.widgets._
 
+// schedulerWindowSize: read scheduling window. writeWindowSize: write scheduling window
+// (defaults to schedulerWindowSize). Both are also runtime-programmable down from these maxima.
 case class FirstReadyFCFSConfig(
   dramKey:                     DramOrganizationParams,
   schedulerWindowSize:         Int,
   transactionQueueDepth:       Int,
   backendKey:                  DRAMBackendKey = DRAMBackendKey(4, 4, DRAMMasEnums.backendLatencyBits),
   params:                      BaseParams,
+  writeWindowSize:             Option[Int] = None,
 ) extends DRAMBaseConfig {
   require(transactionQueueDepth > 0, "FASED DRAM transaction queue depth must be non-zero")
 
-  // Write-drain watermarks, in units of completed (data-resident) writes
-  val writeHighWatermark:          Int = (transactionQueueDepth * 0.8).ceil.toInt
-  val writeLowWatermark:           Int = (transactionQueueDepth * 0.2).ceil.toInt
-  val writeOpportunisticWatermark: Int = (transactionQueueDepth * 0.15).ceil.toInt
+  val readWindow:  Int = schedulerWindowSize
+  val writeWindow: Int = writeWindowSize.getOrElse(schedulerWindowSize)
+  require(readWindow > 0 && writeWindow > 0, "FASED scheduling windows must be non-zero")
+
+  // Default write-drain settings, in units of pending writes (runtime-programmable)
+  val writeHighWatermark: Int = (transactionQueueDepth * 0.8).ceil.toInt
+  val writeLowWatermark:  Int = (transactionQueueDepth * 0.2).ceil.toInt
+  val writeMinBatch:      Int = 8
+  // Read-idle cycles before draining writes below the low watermark (0 = never)
+  val writeIdleDrainCycles: Int = 64
+
+  // Upper bounds of the pendingWrites histogram bins (one more bin catches the rest)
+  val writeQueueBins: Seq[Int] = Seq(0, 4, 7, 16, 25)
 
   def elaborate()(implicit p: Parameters): FirstReadyFCFSModel = Module(new FirstReadyFCFSModel(this))
 }
 
 class FirstReadyFCFSMMRegIO(val cfg: FirstReadyFCFSConfig) extends BaseDRAMMMRegIO(cfg) {
-  val schedulerWindowSize   = Input(UInt(log2Ceil(cfg.schedulerWindowSize).W))
+  // Read window depth (name kept so existing runtime confs still apply)
+  val schedulerWindowSize   = Input(UInt(log2Ceil(cfg.readWindow + 1).W))
+  val writeWindowSize       = Input(UInt(log2Ceil(cfg.writeWindow + 1).W))
   val transactionQueueDepth = Input(UInt(log2Ceil(cfg.transactionQueueDepth).W))
+
+  val writeHighWatermark = Input(UInt(log2Ceil(cfg.transactionQueueDepth + 1).W))
+  val writeLowWatermark  = Input(UInt(log2Ceil(cfg.transactionQueueDepth + 1).W))
+  val writeMinBatch      = Input(UInt(log2Ceil(cfg.transactionQueueDepth + 1).W))
+  val writeIdleDrainCycles = Input(UInt(WriteDrainSettings.idleCyclesWidth.W))
+
+  // Write-drain instrumentation
+  val writeDrain = Output(new WriteDrainStats)
+  // Cycles with pendingWrites (data resident, CASW not issued) in each bin of
+  // cfg.writeQueueBins: 0, 1-4, 5-7, 8-16, 17-25, >= 26
+  val pendingWritesHistogram = Output(Vec(cfg.writeQueueBins.size + 1, UInt(32.W)))
 
   val registers = dramBaseRegisters ++ Seq(
     (schedulerWindowSize  -> RuntimeSetting(
-      default = cfg.schedulerWindowSize,
-      query   = "Reference queue depth",
+      default = cfg.readWindow,
+      query   = "Read scheduling window depth",
       min     = 1,
-      max     = Some(cfg.schedulerWindowSize),
+      max     = Some(cfg.readWindow),
+    )),
+    (writeWindowSize      -> RuntimeSetting(
+      default = cfg.writeWindow,
+      query   = "Write scheduling window depth",
+      min     = 1,
+      max     = Some(cfg.writeWindow),
     )),
     transactionQueueDepth -> RuntimeSetting(
       default = cfg.transactionQueueDepth,
@@ -43,6 +74,30 @@ class FirstReadyFCFSMMRegIO(val cfg: FirstReadyFCFSConfig) extends BaseDRAMMMReg
       min     = 1,
       max     = Some(cfg.transactionQueueDepth),
     ),
+    (writeHighWatermark   -> RuntimeSetting(
+      default = cfg.writeHighWatermark,
+      query   = "Pending writes that force write mode",
+      min     = 1,
+      max     = Some(cfg.transactionQueueDepth),
+    )),
+    (writeLowWatermark    -> RuntimeSetting(
+      default = cfg.writeLowWatermark,
+      query   = "Pending writes for an opportunistic drain, and the drain floor",
+      min     = 0,
+      max     = Some(cfg.transactionQueueDepth),
+    )),
+    (writeMinBatch        -> RuntimeSetting(
+      default = cfg.writeMinBatch,
+      query   = "Minimum writes issued per write-mode episode",
+      min     = 0,
+      max     = Some(cfg.transactionQueueDepth),
+    )),
+    (writeIdleDrainCycles -> RuntimeSetting(
+      default = cfg.writeIdleDrainCycles,
+      query   = "Cycles with no reads pending before draining writes below the low watermark (0 = never)",
+      min     = 0,
+      max     = Some((1 << WriteDrainSettings.idleCyclesWidth) - 1),
+    )),
   )
 
   def requestSettings(): Unit = {
@@ -71,19 +126,19 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters)
   val timings = io.mmReg.dramTimings
 
   val backend          = Module(new DRAMBackend(p(NastiKey), cfg.backendKey))
-  val xactionScheduler = Module(
-    new SplitXactionScheduler(
-      p(NastiKey),
-      cfg.transactionQueueDepth,
-      cfg,
-      cfg.writeHighWatermark,
-      cfg.writeLowWatermark,
-      cfg.writeOpportunisticWatermark,
-    )
-  )
+  val xactionScheduler = Module(new SplitXactionScheduler(p(NastiKey), cfg.transactionQueueDepth, cfg, cfg.writeWindow))
   xactionScheduler.io.req          <> nastiReq
   xactionScheduler.io.pendingAWReq := pendingAWReq.value
   xactionScheduler.io.pendingWReq  := pendingWReq.value
+
+  xactionScheduler.io.drainSettings.highWatermark := io.mmReg.writeHighWatermark
+  xactionScheduler.io.drainSettings.lowWatermark  := io.mmReg.writeLowWatermark
+  xactionScheduler.io.drainSettings.minBatch      := io.mmReg.writeMinBatch
+  xactionScheduler.io.drainSettings.idleCycles    := io.mmReg.writeIdleDrainCycles
+  io.mmReg.writeDrain                             := xactionScheduler.io.drainStats
+
+  // true: only the write window may issue commands; false: only the read window
+  val writeMode = xactionScheduler.io.writeMode
 
   // Trackers for controller-level structural hazards
   val cmdBusBusy = Module(new DownCounter((maxDRAMTimingBits)))
@@ -96,31 +151,39 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters)
   // Trackers for DRAM timing violations
   val rankStateTrackers = Seq.fill(cfg.dramKey.maxRanks)(Module(new RankStateTracker(cfg.dramKey)))
 
-  // Prevents closing a row before a CAS command has been issued for the ready entry
-  // Instead of counting the number, we keep a bit to indicate presence
-  // it is set on activation, enqueuing a new ready entry, and unset when a memreq kills the last
-  // ready entry
-  val bankHasReadyEntries = RegInit(VecInit(Seq.fill(cfg.dramKey.maxRanks * cfg.dramKey.maxBanks)(false.B)))
+  // Window entries for transactions leaving the scheduler. isReady is set further down,
+  // once this cycle's command is known.
+  def newRef(x: DecoupledIO[XactionSchedulerEntry]): DecoupledIO[FirstReadyFCFSEntry] = {
+    val r = Wire(Decoupled(new FirstReadyFCFSEntry(p(NastiKey), cfg)))
+    r.valid := x.valid
+    r.bits.decode(x.bits, io.mmReg)
+    r.bits.mayPRE := false.B // unused: PRE eligibility is computed each cycle (modeReadyBanks)
+    x.ready := r.ready
+    r
+  }
+  val newRead  = newRef(xactionScheduler.io.nextRead)
+  val newWrite = newRef(xactionScheduler.io.nextWrite)
 
-  // State for the collapsing buffer of pending memory references
-  val newReference = Wire(Decoupled(new FirstReadyFCFSEntry(p(NastiKey), cfg)))
-  newReference.valid := xactionScheduler.io.nextXaction.valid
-  newReference.bits.decode(xactionScheduler.io.nextXaction.bits, io.mmReg)
-
-  // Mark that the new reference hits an open row buffer, in case it missed the broadcast
-  val rowHitsInRank = VecInit(rankStateTrackers.map { tracker =>
-    VecInit(tracker.io.rank.banks.map { _.isRowHit(newReference.bits) }).asUInt
-  })
-
-  xactionScheduler.io.nextXaction.ready := newReference.ready
-
-  val refBuffer  = CollapsingBuffer(
-    enq               = newReference,
-    depth             = cfg.schedulerWindowSize,
+  // Separate read and write scheduling windows
+  val readBuffer  = CollapsingBuffer(
+    enq               = newRead,
+    depth             = cfg.readWindow,
     programmableDepth = Some(io.mmReg.schedulerWindowSize),
   )
-  val refList    = refBuffer.io.entries
-  val refUpdates = refBuffer.io.updates
+  val writeBuffer = CollapsingBuffer(
+    enq               = newWrite,
+    depth             = cfg.writeWindow,
+    programmableDepth = Some(io.mmReg.writeWindowSize),
+  )
+  // Reads first, so within the active window the arbiters still pick the oldest
+  val refList    = readBuffer.io.entries ++ writeBuffer.io.entries
+  val refUpdates = readBuffer.io.updates ++ writeBuffer.io.updates
+
+  // An entry may have a command issued for it (CAS, ACT or PRE) only in its own mode
+  def inMode(e: ValidIO[FirstReadyFCFSEntry]): Bool = e.valid && e.bits.xaction.isWrite === writeMode
+
+  xactionScheduler.io.readsInWindow := readBuffer.io.entries.map(_.valid).reduce(_ || _)
+  xactionScheduler.io.writeIssued   := selectedCmd === cmd_casw
 
   // Selects the oldest candidate from all ready references that can legally request a CAS
   val columnArbiter = Module(new Arbiter(refList.head.bits.cloneType, refList.size))
@@ -146,23 +209,32 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters)
   val canLegallyACT  = checkRankBankLegality(_.canACT, (rank, bg) => rank.canACT(bg)) _
   val canLegallyPRE  = checkRankBankLegality(_.canPRE, (rank, _) => rank.canPRE) _
 
-  val readsPending = refList.map(entry => entry.valid && !entry.bits.xaction.isWrite).reduce(_ || _)
-  xactionScheduler.io.doesSchedHavePendingReads := readsPending
-
   columnArbiter.io.in <> refList.map({ entry =>
     val candidate = V2D(entry)
     val canCASR   = canLegallyCASR(entry.bits) && backend.io.newRead.ready
     val canCASW   = canLegallyCASW(entry.bits)
-    candidate.valid := entry.valid && entry.bits.isReady &&
+    candidate.valid := inMode(entry) && entry.bits.isReady &&
       Mux(entry.bits.xaction.isWrite, canCASW, canCASR) &&
       !rankWantsRef(entry.bits.rankAddrOH)
 
     candidate
   })
 
-  val entryWantsPRE = refList.map { ref => ref.valid && ref.bits.wantPRE() && canLegallyPRE(ref.bits) }
+  // Banks (per rank) holding a ready entry of the current mode: their open row is still
+  // wanted, so no entry may precharge them. Entries of the other mode are ignored, so a
+  // waiting write cannot pin a row against a read that needs another one (and vice versa).
+  val modeReadyBanks = rankStateTrackers.indices.map { r =>
+    refList
+      .map { e => Mux(inMode(e) && e.bits.isReady && e.bits.rankAddrOH(r), e.bits.bankAddrOH, 0.U) }
+      .reduce(_ | _)
+  }
+  def mayPRE(e: FirstReadyFCFSEntry): Bool = !(Mux1H(e.rankAddrOH, modeReadyBanks) & e.bankAddrOH).orR
+
+  val entryWantsPRE = refList.map { ref =>
+    inMode(ref) && !ref.bits.isReady && mayPRE(ref.bits) && canLegallyPRE(ref.bits)
+  }
   val entryWantsACT = refList.map { ref =>
-    ref.valid && ref.bits.wantACT() && canLegallyACT(ref.bits) &&
+    inMode(ref) && ref.bits.wantACT() && canLegallyACT(ref.bits) &&
     !rankWantsRef(ref.bits.rankAddrOH)
   }
 
@@ -218,6 +290,8 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters)
   columnArbiter.io.out.ready := selectedCmd === cmd_casw || selectedCmd === cmd_casr
 
   // Take the readies from the arbiter, and kill the selected entry
+  // Both windows count here: a ready entry of either mode keeps the row open under
+  // the closed-page policy
   val entriesStillReady = refUpdates.zip(columnArbiter.io.in).map { case (ref, sel) =>
     when(sel.fire) { ref.valid := false.B }
     // If the entry is not killed, but shares the same open row as the killed reference, return true
@@ -228,50 +302,38 @@ class FirstReadyFCFSModel(cfg: FirstReadyFCFSConfig)(implicit p: Parameters)
   val otherReadyEntries = entriesStillReady.reduce { _ || _ }
   val casAutoPRE        = Mux(io.mmReg.openPagePolicy, false.B, memReqDone && !otherReadyEntries)
 
-  // Mark new entries that now hit in a open row buffer
-  // Or invalidate them if a precharge was issued
+  // Mark entries that now hit in an open row buffer, or not after a precharge
   refUpdates.foreach({ ref =>
     when(cmdRank === ref.bits.rankAddr && cmdBank === ref.bits.bankAddr) {
       when(selectedCmd === cmd_act) {
         ref.bits.isReady := ref.bits.rowAddr === cmdRow
-        ref.bits.mayPRE  := false.B
       }.elsewhen(selectedCmd === cmd_pre) {
         ref.bits.isReady := false.B
-        ref.bits.mayPRE  := false.B
-      }.elsewhen(memReqDone && !otherReadyEntries) {
-        ref.bits.mayPRE := true.B
       }
     }
   })
 
-  val newRefAddrMatch     = newReference.bits.addrMatch(cmdRank, cmdBank, Some(cmdRow))
-  val newRefBankAddrMatch = newReference.bits.addrMatch(cmdRank, cmdBank)
-  newReference.bits.isReady := // 1) Row just opened or 2) already open && No precharges to that row this cycle
-    selectedCmd === cmd_act && newRefAddrMatch ||
-      (rowHitsInRank(newReference.bits.rankAddr) & newReference.bits.bankAddrOH).orR &&
-      !(memReqDone && casAutoPRE && newRefBankAddrMatch) && !(selectedCmd === cmd_pre && newRefBankAddrMatch)
-
-  // Useful only for the open-page policy. In closed page policy, precharges
-  // are always issued as part of auto-pre commands on in preperation for refresh.
-  newReference.bits.mayPRE := // Last ready reference serviced or no other ready entries
-    Mux(
-      io.mmReg.openPagePolicy,
-      // 1:The last ready request has been made to the bank
-      newReference.bits.addrMatch(cmdRank, cmdBank) && memReqDone && !otherReadyEntries ||
-        // 2: There are no ready references, and a precharge is not being issued to the bank this cycle
-        !bankHasReadyEntries(Cat(newReference.bits.rankAddr, newReference.bits.bankAddr)) &&
-        !(selectedCmd === cmd_pre && newRefBankAddrMatch),
-      false.B,
-    )
-
-  // Check if the broadcasted cmdBank and cmdRank hit a ready entry
-  when(memReqDone || selectedCmd === cmd_act) {
-    bankHasReadyEntries(Cat(cmdRank, cmdBank)) := memReqDone && otherReadyEntries || selectedCmd === cmd_act
+  // New references: 1) row just opened or 2) already open && no precharge to that bank this cycle
+  Seq(newRead, newWrite).foreach { n =>
+    val rowHits       = VecInit(rankStateTrackers.map { tracker =>
+      VecInit(tracker.io.rank.banks.map { _.isRowHit(n.bits) }).asUInt
+    })
+    val addrMatch     = n.bits.addrMatch(cmdRank, cmdBank, Some(cmdRow))
+    val bankAddrMatch = n.bits.addrMatch(cmdRank, cmdBank)
+    n.bits.isReady := selectedCmd === cmd_act && addrMatch ||
+      (rowHits(n.bits.rankAddr) & n.bits.bankAddrOH).orR &&
+      !(memReqDone && casAutoPRE && bankAddrMatch) && !(selectedCmd === cmd_pre && bankAddrMatch)
   }
 
-  when(newReference.bits.isReady & newReference.fire) {
-    bankHasReadyEntries(Cat(newReference.bits.rankAddr, newReference.bits.bankAddr)) := true.B
-  }
+  // Pending-write occupancy histogram (see FirstReadyFCFSMMRegIO.writeQueueBins)
+  val pendingWrites = xactionScheduler.io.pendingWrites
+  val pwBins        = cfg.writeQueueBins
+  val pwHist        = Seq.fill(pwBins.size + 1)(RegInit(0.U(32.W)))
+  val pwInBin       = pwBins.zipWithIndex.map { case (m, i) =>
+    pendingWrites <= m.U && (if (i == 0) true.B else pendingWrites > pwBins(i - 1).U)
+  } :+ (pendingWrites > pwBins.last.U)
+  pwHist.zip(pwInBin).foreach { case (h, in) => when(in) { h := h + 1.U } }
+  io.mmReg.pendingWritesHistogram := VecInit(pwHist)
 
   rankStateTrackers.zip(UIntToOH(cmdRank).asBools).foreach { case (state, cmdUsesThisRank) =>
     state.io.selectedCmd     := selectedCmd

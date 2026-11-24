@@ -126,7 +126,7 @@ abstract class BaseDRAMMMRegIO(cfg: DRAMBaseConfig) extends MMRegIO(cfg) with Ha
     new ProgrammableSubAddr(
       maskBits         = cfg.dramKey.bankBits,
       longName         = "Bank Address",
-      defaultOffset    = 13,
+      defaultOffset    = 8,
       defaultMask      = cfg.dramKey.maxBanks - 1,
       defaultXorOffset = 17,
     )
